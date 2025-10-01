@@ -8,12 +8,16 @@ import torchaudio
 import numpy as np
 import librosa
 import torch
+import utils
+from module.models import SynthesizerTrn
+import base64
+
+if torch.cuda.is_available():
+    device = "cuda:0"
+else:
+    device = "cpu"
 
 def prepare(output_dir, src_dir, lang, model_dir, sr=32000):
-    if torch.cuda.is_available():
-        device = "cuda:0"
-    else:
-        device = "cpu"
     cnhubert.cnhubert_base_path = model_dir
     model = cnhubert.get_model()
     model = model.to(device)
@@ -63,6 +67,39 @@ def prepare(output_dir, src_dir, lang, model_dir, sr=32000):
                 f2.write(f"[{lang}]{txt}")
         
         torch.save(ssl, f"{hubert_folder}/{fn}.pth")
+def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProPlus.pth"):
+    hps = utils.get_hparams_from_file("./configs/s2v2ProPlus.json")
+    vq_model = SynthesizerTrn(
+        hps.data.filter_length // 2 + 1,
+        hps.train.segment_size // hps.data.hop_length,
+        n_speakers=hps.data.n_speakers,
+        version="v2ProPlus",
+        **hps.model,
+    )
+    vq_model = vq_model.to(device)
+    vq_model.eval()
+    print(
+        vq_model.load_state_dict(
+            torch.load(pretrained_s2G, map_location="cpu", weights_only=False)["weight"], strict=False
+        )
+    )
+    txt_folder = f"{output_dir}/1-txts"
+    hubert_folder = f"{output_dir}/2-huberts"
+    files = glob.glob(f"{txt_folder}/*.txt")
+    with open(f"{output_dir}/semantic_pairs.txt", 'w', encoding='utf-8') as fw:
+        for i in tqdm(files, desc="Processing audios"):
+            base_name, ext = os.path.splitext(i)
+            fn = os.path.basename(base_name)
+
+            ssl_content = torch.load(f"{hubert_folder}/{fn}.pth", map_location="cpu")
+            ssl_content = ssl_content.to(device)
+            codes = vq_model.extract_latent(ssl_content)
+            i16_codes = codes.cpu().to(torch.int16).numpy()
+            base64_str = base64.b64encode(i16_codes.tobytes()).decode('utf-8')
+            with open(i,'r', encoding='utf8') as f:
+                txt = f.read()
+            fw.write("%s\t%s\n" % (txt, base64_str))
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -90,12 +127,21 @@ if __name__ == '__main__':
         help="Dataset Language"
     )
     parser.add_argument(
+        "-s", 
+        "--step", 
+        type=int, 
+        default=1, 
+        help="Process step"
+    )
+    parser.add_argument(
         "-m", 
         "--pretrained_model", 
         type=str, 
         default="./pretrained_models/chinese-hubert-base", 
-        help="Dataset source"
+        help="Path for pretrained model"
     )
     args = parser.parse_args()
-
-    prepare(args.output_dir, args.source_dir, args.lang, args.pretrained_model)
+    if args.step == 0:
+        prepare(args.output_dir, args.source_dir, args.lang, args.pretrained_model)
+    elif args.step == 1:
+        process_semantic(args.output_dir)
