@@ -32,6 +32,15 @@ def crawl_dataset(dataset_dir, dataset_source:str, lang:str,target_duration):
     processed_ids = load_existing_ids(database_path)
 
     cur_list = processed_ids.get(dataset_source, list())
+    if cur_list is not None:
+        lang_list = cur_list.get(lang)
+        if lang_list is None:            
+            lang_list = list()
+            cur_list[lang]=lang_list
+        cur_list = lang_list
+    else:
+        cur_list = list()
+        processed_ids[dataset_source] = {lang:cur_list}
     total_secs = 0
     cur_id_bucket={}
     for i in cur_list:
@@ -53,8 +62,8 @@ def crawl_emilia(dataset_source, cur_id_bucket:dict, lang, dataset_save_path,tar
         path = f"{dataset_source}/ZH/*.tar" # Same for Emilia-YODAS; just replace "Emilia/" with "Emilia-YODAS/"
         split_name = "zh"
     elif lang == "jp":
-        path = f"{dataset_source}/JP/*.tar" # Same for Emilia-YODAS; just replace "Emilia/" with "Emilia-YODAS/"
-        split_name = "jp"
+        path = f"{dataset_source}/JA/*.tar" # Same for Emilia-YODAS; just replace "Emilia/" with "Emilia-YODAS/"
+        split_name = "ja"
     dataset = load_dataset("amphion/Emilia-Dataset",data_files={split_name: path}, split=split_name, streaming=True)    
     dataset = dataset.shuffle(seed=11223, buffer_size=10000)
     
