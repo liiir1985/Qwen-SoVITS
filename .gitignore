@@ -181,3 +181,4 @@ cython_debug/
 .cursorindexingignore
 Qwen-SoVITS/dataset/
 Qwen-SoVITS/logs/
+Qwen-SoVITS/pretrained_models/
