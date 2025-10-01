@@ -59,6 +59,7 @@ def crawl_emilia(dataset_source, cur_id_bucket:dict, lang, dataset_save_path,tar
     dataset = dataset.shuffle(seed=11223, buffer_size=10000)
     
     with tqdm(total=target_duration, desc="Dataset crawling", unit="Secs") as t:
+        t.update(total_secs)
         for sample in dataset:
             meta = sample['json']
             id = meta['id']
@@ -72,7 +73,7 @@ def crawl_emilia(dataset_source, cur_id_bucket:dict, lang, dataset_save_path,tar
                 continue
             
             total_secs += duration
-            t.update(int(round(duration)))
+            t.update(duration)
 
             sound_file_path = f"{dataset_save_path}/{id}.flac"
             if not os.path.exists(sound_file_path):
