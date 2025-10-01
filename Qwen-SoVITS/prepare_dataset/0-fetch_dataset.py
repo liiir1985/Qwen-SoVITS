@@ -58,10 +58,10 @@ def crawl_emilia(dataset_source, cur_id_bucket:dict, lang, dataset_save_path,tar
     if lang == "en":
         path = f"{dataset_source}/EN/*.tar" # Same for Emilia-YODAS; just replace "Emilia/" with "Emilia-YODAS/"
         split_name = "en"
-    elif lang == "cn":
+    elif lang == "zh":
         path = f"{dataset_source}/ZH/*.tar" # Same for Emilia-YODAS; just replace "Emilia/" with "Emilia-YODAS/"
         split_name = "zh"
-    elif lang == "jp":
+    elif lang == "ja":
         path = f"{dataset_source}/JA/*.tar" # Same for Emilia-YODAS; just replace "Emilia/" with "Emilia-YODAS/"
         split_name = "ja"
     dataset = load_dataset("amphion/Emilia-Dataset",data_files={split_name: path}, split=split_name, streaming=True)    
