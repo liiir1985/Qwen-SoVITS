@@ -2,6 +2,7 @@ torch==2.8.0+cu128
 torchaudio
 torchvision
 scipy
+datasets
 torchcodec~=0.7.0
 transformers~=4.51
 librosa~=0.10.2
