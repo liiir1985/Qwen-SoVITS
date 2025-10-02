@@ -9,6 +9,7 @@ import numpy as np
 import librosa
 import torch
 import utils
+from utils import load_audio, get_audio_hubert
 from module.models import SynthesizerTrn
 import base64
 
@@ -21,8 +22,6 @@ def prepare(output_dir, src_dir, lang, model_dir, sr=32000):
     cnhubert.cnhubert_base_path = model_dir
     model = cnhubert.get_model()
     model = model.to(device)
-    maxx = 0.95
-    alpha = 0.5
     txt_folder = f"{output_dir}/1-txts"
     os.makedirs(txt_folder, exist_ok=True)
     hubert_folder = f"{output_dir}/2-huberts"
@@ -33,29 +32,13 @@ def prepare(output_dir, src_dir, lang, model_dir, sr=32000):
         base_name, ext = os.path.splitext(i)
         fn = os.path.basename(base_name)
         
-        audio_path = f"{base_name}.flac"
-        decoder = AudioDecoder(audio_path)
-        data = decoder.get_all_samples()
-        if data.sample_rate != sr:
-            resampler = torchaudio.transforms.Resample(
-                orig_freq=data.sample_rate,
-                new_freq=sr)
-            audio_data = resampler(data.data)
-        else:
-            audio_data = data.data
-        
-        final_data = audio_data.flatten().numpy()
+        audio_path = f"{base_name}.flac"        
+        final_data = load_audio(audio_path, sr)
         tmp_max = np.abs(final_data).max()
         if tmp_max > 2.2:
             print("%s-filtered,%s" % (i, tmp_max))
             continue
-        #tmp_audio32 = (final_data / tmp_max * (maxx * alpha * 32768)) + ((1 - alpha) * 32768) * final_data
-        #wavfile.write("test.wav", 32000, tmp_audio32)
-        tmp_audio32b = (final_data / tmp_max * (maxx * alpha * 1145.14)) + ((1 - alpha) * 1145.14) * final_data
-        tmp_audio = librosa.resample(tmp_audio32b, orig_sr=sr, target_sr=16000)  # 不是重采样问题
-        tensor_wav16 = torch.from_numpy(tmp_audio)
-        tensor_wav16 = tensor_wav16.to(device)
-        ssl = model.model(tensor_wav16.unsqueeze(0))["last_hidden_state"].transpose(1, 2).cpu() 
+        ssl = get_audio_hubert(model, final_data, sr)
         if np.isnan(ssl.detach().numpy()).sum() != 0:
             print("nan filtered:%s" % i)
             continue

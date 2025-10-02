@@ -10,6 +10,8 @@ import traceback
 import librosa
 import numpy as np
 import torch
+from torchcodec.decoders import AudioDecoder
+import torchaudio
 
 logging.getLogger("numba").setLevel(logging.ERROR)
 logging.getLogger("matplotlib").setLevel(logging.ERROR)
@@ -19,6 +21,34 @@ MATPLOTLIB_FLAG = False
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging
 
+def load_audio(audio_path, sr=32000):
+    decoder = AudioDecoder(audio_path)
+    data = decoder.get_all_samples()
+    if data.sample_rate != sr:
+        resampler = torchaudio.transforms.Resample(
+            orig_freq=data.sample_rate,
+            new_freq=sr)
+        audio_data = resampler(data.data)
+    else:
+        audio_data = data.data
+
+    final_data = audio_data.flatten().numpy()
+    return final_data
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+maxx = 0.95
+alpha = 0.5
+
+def get_audio_hubert(model, samples, sr=32000):
+    tmp_max = np.abs(samples).max()
+    #tmp_audio32 = (final_data / tmp_max * (maxx * alpha * 32768)) + ((1 - alpha) * 32768) * final_data
+    #wavfile.write("test.wav", 32000, tmp_audio32)
+    tmp_audio32b = (samples / tmp_max * (maxx * alpha * 1145.14)) + ((1 - alpha) * 1145.14) * samples
+    tmp_audio = librosa.resample(tmp_audio32b, orig_sr=sr, target_sr=16000)  # 不是重采样问题
+    tensor_wav16 = torch.from_numpy(tmp_audio)
+    tensor_wav16 = tensor_wav16.to(device)
+    ssl = model.model(tensor_wav16.unsqueeze(0))["last_hidden_state"].transpose(1, 2).cpu() 
+    return ssl
 
 def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False):
     assert os.path.isfile(checkpoint_path)

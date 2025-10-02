@@ -23,7 +23,7 @@ class Qwen3Text2SemanticDataset(Dataset):
         with open(semantic_path, 'r', encoding='utf-8') as f:
             for line in tqdm(f, desc="Loading dataset"):
                 arr = line.split("\t")
-                prompt = f"语音转文本任务：{{{arr[0]}}}"
+                prompt = f"<|im_start|>user\n语音转文本任务：{{{arr[0]}}}<|im_end|>\n<|im_start|>assistant\n"
                 txt_ids = tokenizer([prompt], return_tensors="pt").to('cpu')
                 txt_ids = txt_ids.data['input_ids'].flatten()
                 buffer = base64.b64decode(arr[1])
