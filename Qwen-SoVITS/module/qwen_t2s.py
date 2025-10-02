@@ -6,7 +6,7 @@ import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-def start_train(output_dir, model_path, batch_size, epoch, save_epoch, max_ckpt):
+def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_epoch, max_ckpt):
     print(f"Loading model on device: {device}")
 
     # 2. 加载 Tokenizer (分词器)
@@ -34,8 +34,13 @@ def start_train(output_dir, model_path, batch_size, epoch, save_epoch, max_ckpt)
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=epoch,
+        learning_rate=2e-5,  # 适用于全参数微调 (或 LoRA微调可尝试 1e-4)    
+        # 【核心调整 2：使用 Cosine 调度器】
+        lr_scheduler_type="cosine",    
+        # 【核心调整 3：设置 Warmup】
+        warmup_ratio=0.05, # 前 5% 的步数用于学习率爬升
         per_device_train_batch_size=batch_size,    # use batch size 2 per GPU
-        gradient_accumulation_steps=1,    # no grad accumulation (since batch 2 is fine)
+        gradient_accumulation_steps=gradient_acc,    # no grad accumulation (since batch 2 is fine)
         logging_steps=20,                 # log every 20 steps
         save_strategy="epoch", 
         save_steps=save_epoch,                     # no checkpoints (not needed for demo)
@@ -60,6 +65,27 @@ def start_train(output_dir, model_path, batch_size, epoch, save_epoch, max_ckpt)
         trainer.train(resume_from_checkpoint=True)
     else:
         trainer.train()
+
+def modify_base_model(output_dir, model_path):
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_path,
+        trust_remote_code=True
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        torch_dtype='auto',
+        device_map="auto",
+        trust_remote_code=True 
+    )
+
+    NUM_SEMANTIC_TOKENS = 2048
+    semantic_tokens = [f"<t2s_{i}>" for i in range(NUM_SEMANTIC_TOKENS)]    
+    tokenizer.add_tokens(semantic_tokens)
+    new_vocab_size = len(tokenizer)
+    model.resize_token_embeddings(new_vocab_size)
+    
+    tokenizer.save_pretrained(output_dir)
+    model.save_pretrained(output_dir)
 
 class Qwen3Text2SemanticModel:
     tokenizer:any
@@ -126,6 +152,13 @@ if __name__ == '__main__':
         help="Epochs to train"
     )
     parser.add_argument(
+        "-ga", 
+        "--gradient_acc", 
+        type=int, 
+        default=4, 
+        help="Gradient accumulation steps to train"
+    )
+    parser.add_argument(
         "--save_epoch", 
         type=int, 
         default=5, 
@@ -144,8 +177,18 @@ if __name__ == '__main__':
         default="./pretrained_models/qwen3", 
         help="Path for pretrained model"
     )
+    parser.add_argument(
+        "-bm", 
+        '--modify_base_model',
+        action='store_true',
+        default=False,
+        help='Modify the base model to adapt the semantic tokens'
+    )
     args = parser.parse_args()
-    start_train(args.output_dir, args.pretrained_model, args.batch_size, args.epoch,args.save_epoch,args.max_ckpt)
+    if args.modify_base_model:
+        modify_base_model(args.output_dir, args.pretrained_model)
+    else:
+        start_train(args.output_dir, args.pretrained_model, args.batch_size, args.gradient_acc, args.epoch,args.save_epoch,args.max_ckpt)
 # --- 4. 运行推理测试 ---
 # text = "how are you"
 # model_inputs = tokenizer([text], return_tensors="pt").to(device)

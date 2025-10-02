@@ -69,7 +69,9 @@ def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProP
     txt_folder = f"{output_dir}/1-txts"
     hubert_folder = f"{output_dir}/2-huberts"
     files = glob.glob(f"{txt_folder}/*.txt")
-    with open(f"{output_dir}/semantic_pairs.txt", 'w', encoding='utf-8') as fw:
+    max_code = 0
+    min_code = 10000
+    with open(f"{output_dir}/semantic_pairs2.txt", 'w', encoding='utf-8') as fw:
         for i in tqdm(files, desc="Processing audios"):
             base_name, ext = os.path.splitext(i)
             fn = os.path.basename(base_name)
@@ -77,12 +79,18 @@ def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProP
             ssl_content = torch.load(f"{hubert_folder}/{fn}.pth", map_location="cpu")
             ssl_content = ssl_content.to(device)
             codes = vq_model.extract_latent(ssl_content)
+            cmax = codes.max()
+            cmin = codes.min()
+            if cmax > max_code:
+                max_code = cmax
+            if cmin < min_code:
+                min_code = cmin
             i16_codes = codes.cpu().to(torch.int16).numpy()
             base64_str = base64.b64encode(i16_codes.tobytes()).decode('utf-8')
             with open(i,'r', encoding='utf8') as f:
                 txt = f.read()
             fw.write("%s\t%s\n" % (txt, base64_str))
-
+    print(f"min code: {min_code}, max code:{max_code}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(

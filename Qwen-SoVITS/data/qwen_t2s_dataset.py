@@ -11,6 +11,7 @@ class Qwen3Text2SemanticDataset(Dataset):
     """dataset class for text tokens to semantic model training."""
     dataset:list
     tokenizer:any
+    t2s_token_start:int
     def __init__(
              self,
              semantic_path: str,
@@ -20,6 +21,7 @@ class Qwen3Text2SemanticDataset(Dataset):
         self.tokenizer = tokenizer
         self.dataset = []
         eos = torch.tensor(tokenizer.eos_token_id, dtype=torch.int64).unsqueeze(0)
+        self.t2s_token_start = tokenizer.convert_tokens_to_ids("<t2s_0>")
         with open(semantic_path, 'r', encoding='utf-8') as f:
             for line in tqdm(f, desc="Loading dataset"):
                 arr = line.split("\t")
@@ -29,6 +31,7 @@ class Qwen3Text2SemanticDataset(Dataset):
                 buffer = base64.b64decode(arr[1])
                 semantic_np = np.frombuffer(buffer, dtype=np.int16).copy()
                 semantic_ids = torch.from_numpy(semantic_np).to(torch.int64)
+                semantic_ids = semantic_ids + self.t2s_token_start
                 final = torch.cat([txt_ids, semantic_ids, eos], dim=0)
                 #attention_mask = (final != tokenizer.pad_token_id).long()
                 # Create labels (copy of input_ids)
