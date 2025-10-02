@@ -90,6 +90,7 @@ def modify_base_model(output_dir, model_path):
 class Qwen3Text2SemanticModel:
     tokenizer:any
     model:any
+    t2s_token_start:any
     def __init__(self, model_path):
         print(f"Loading model on device: {device}")
 
@@ -104,11 +105,12 @@ class Qwen3Text2SemanticModel:
             device_map="auto",
             trust_remote_code=True 
         )
-
+        self.t2s_token_start = self.tokenizer.convert_tokens_to_ids("<t2s_0>")
         self.model.to(device)
     
     def infer(self, prompt:str, ref_txt:str, ref_semantic:torch.Tensor):
-        text = f"语音转文本任务：{{{ref_txt}.{prompt}}}"
+        text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}.{prompt}}}<|im_end|>\n<|im_start|>assistant\n"
+        ref_semantic = ref_semantic + self.t2s_token_start
         txt_ids = self.tokenizer([text], return_tensors="pt").to('cpu')
         input_ids = txt_ids.data['input_ids']
         attention_mask = txt_ids.data['attention_mask']
