@@ -2,6 +2,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer,TrainingArguments, 
 import torch
 from data.qwen_t2s_dataset import Qwen3Text2SemanticDataset
 import argparse
+import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -32,7 +33,6 @@ def start_train(output_dir, model_path, batch_size, epoch, save_epoch, max_ckpt)
 
     training_args = TrainingArguments(
         output_dir=output_dir,
-        overwrite_output_dir=True,
         num_train_epochs=epoch,
         per_device_train_batch_size=batch_size,    # use batch size 2 per GPU
         gradient_accumulation_steps=1,    # no grad accumulation (since batch 2 is fine)
@@ -52,8 +52,14 @@ def start_train(output_dir, model_path, batch_size, epoch, save_epoch, max_ckpt)
         data_collator=dataset.collate,
         args=training_args,
     )
-
-    trainer.train(resume_from_checkpoint=True)
+    checkpoint_exists = any(
+        os.path.isdir(os.path.join(output_dir, d)) and d.startswith("checkpoint-")
+        for d in os.listdir(output_dir)
+    )
+    if checkpoint_exists:
+        trainer.train(resume_from_checkpoint=True)
+    else:
+        trainer.train()
 
 class Qwen3Text2SemanticModel:
     tokenizer:any
@@ -78,17 +84,16 @@ class Qwen3Text2SemanticModel:
     def infer(self, prompt:str, ref_txt:str, ref_semantic:torch.Tensor):
         text = f"语音转文本任务：{{{ref_txt}.{prompt}}}"
         txt_ids = self.tokenizer([text], return_tensors="pt").to('cpu')
-        # input_ids = txt_ids.data['input_ids']
-        # attention_mask = txt_ids.data['attention_mask']
-        # attention_mask_ref = (ref_semantic != self.tokenizer.pad_token_id).long()
-        # input_ids = torch.cat([input_ids,ref_semantic], dim=1)
-        # attention_mask = torch.cat([attention_mask, attention_mask_ref], dim=1)
-        # txt_ids.data['input_ids'] = input_ids
-        # txt_ids.data['attention_mask'] = attention_mask
-        txt_ids = txt_ids.to(device)
+        input_ids = txt_ids.data['input_ids']
+        attention_mask = txt_ids.data['attention_mask']
+        attention_mask_ref = (ref_semantic != self.tokenizer.pad_token_id).long()
+        input_ids = torch.cat([input_ids,ref_semantic], dim=1).to(device)
+        attention_mask = torch.cat([attention_mask, attention_mask_ref], dim=1).to(device)
         generated_ids = self.model.generate(
-            **txt_ids, 
-            max_new_tokens=256
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=256,
+            eos_token_id=self.tokenizer.eos_token_id
         )
 
         response = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
@@ -110,7 +115,7 @@ if __name__ == '__main__':
         "-b", 
         "--batch_size", 
         type=int, 
-        default=1, 
+        default=2, 
         help="Batch size"
     )
     parser.add_argument(

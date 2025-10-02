@@ -5,7 +5,7 @@ import torch
 from feature_extractor import cnhubert
 from utils import load_audio, get_audio_hubert
 
-t2s_model = Qwen3Text2SemanticModel("./pretrained_models/qwen3-base")
+t2s_model = Qwen3Text2SemanticModel("./pretrained_models/qwen3")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 pretrained_s2G = "./pretrained_models/s2Gv2ProPlus.pth"
