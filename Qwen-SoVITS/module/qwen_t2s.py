@@ -21,7 +21,7 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
     # 将本地路径作为第一个参数传入 from_pretrained()
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        dtype='auto',
+        torch_dtype='auto',
         device_map="auto", # 自动分配模型到可用的 GPU/CPU
         trust_remote_code=True 
     )
@@ -73,16 +73,19 @@ def modify_base_model(output_dir, model_path):
     )
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        dtype='auto',
+        torch_dtype='auto',
         device_map="auto",
         trust_remote_code=True 
     )
 
     NUM_SEMANTIC_TOKENS = 2048
-    semantic_tokens = [f"<t2s_{i}>" for i in range(NUM_SEMANTIC_TOKENS)]    
-    tokenizer.add_tokens(semantic_tokens)
+    semantic_tokens = [f"<t2s_{i}>" for i in range(NUM_SEMANTIC_TOKENS)]   
+    special_tokens_dict = {"additional_special_tokens": semantic_tokens} 
+    tokenizer.add_special_tokens(special_tokens_dict)
     new_vocab_size = len(tokenizer)
     model.resize_token_embeddings(new_vocab_size)
+    assert model.get_input_embeddings().weight.size(0) == new_vocab_size
+    assert model.get_output_embeddings().weight.size(0) == new_vocab_size
     
     tokenizer.save_pretrained(output_dir)
     model.save_pretrained(output_dir)
