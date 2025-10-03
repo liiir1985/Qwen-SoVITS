@@ -29,12 +29,12 @@ cnhubert.cnhubert_base_path = "./pretrained_models/chinese-hubert-base"
 hubert_model = cnhubert.get_model()
 hubert_model = hubert_model.to(device)
 
-audio_path="./dataset/ja/JA_B00002_S00054_W000085.flac"
+audio_path="./dataset/Emilia/ja/JA_B00002_S00054_W000085.flac"
 samples = load_audio(audio_path)
 hubert = get_audio_hubert(hubert_model, samples)
 hubert = hubert.to(device)
 codes = vq_model.extract_latent(hubert)
-i16_codes = codes.cpu().squeeze(dim=1).to(torch.int16)
+i16_codes = codes.cpu().squeeze(dim=1).to(torch.int64)
 
 t2s_model.infer("電話をいただきましょうか?電話をいただきましょうか?","[ja]私はとても感動しています私はとても感動しています",i16_codes)
 

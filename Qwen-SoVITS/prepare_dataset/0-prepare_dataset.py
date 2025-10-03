@@ -18,7 +18,7 @@ if torch.cuda.is_available():
 else:
     device = "cpu"
 
-def prepare(output_dir, src_dir, lang, model_dir, sr=32000):
+def prepare(output_dir, src_dir, dataset, lang, model_dir, sr=32000):
     cnhubert.cnhubert_base_path = model_dir
     model = cnhubert.get_model()
     model = model.to(device)
@@ -26,30 +26,34 @@ def prepare(output_dir, src_dir, lang, model_dir, sr=32000):
     os.makedirs(txt_folder, exist_ok=True)
     hubert_folder = f"{output_dir}/2-huberts"
     os.makedirs(hubert_folder, exist_ok=True)
-    files = glob.glob(f"{src_dir}/{lang}/*.txt")
+    files = glob.glob(f"{src_dir}/{dataset}/{lang}/*.txt")
 
     for i in tqdm(files, desc="Processing audios"):
         base_name, ext = os.path.splitext(i)
         fn = os.path.basename(base_name)
+        hubert_path = f"{hubert_folder}/{fn}.pth"
         
-        audio_path = f"{base_name}.flac"        
-        final_data = load_audio(audio_path, sr)
-        tmp_max = np.abs(final_data).max()
-        if tmp_max > 2.2:
-            print("%s-filtered,%s" % (i, tmp_max))
-            continue
-        ssl = get_audio_hubert(model, final_data, sr)
-        if np.isnan(ssl.detach().numpy()).sum() != 0:
-            print("nan filtered:%s" % i)
-            continue
+        if not os.path.exists(hubert_path):
+            try:
+                audio_path = f"{base_name}.flac"        
+                final_data = load_audio(audio_path, sr)
+                tmp_max = np.abs(final_data).max()
+                if tmp_max > 2.2:
+                    print("%s-filtered,%s" % (i, tmp_max))
+                    continue
+                ssl = get_audio_hubert(model, final_data, sr)
+                if np.isnan(ssl.detach().numpy()).sum() != 0:
+                    print("nan filtered:%s" % i)
+                    continue        
+                torch.save(ssl, hubert_path)
 
-        dest_txt_path = f"{txt_folder}/{fn}.txt"
-        with open(i, 'r', encoding='utf8') as f:
-            txt = f.read()
-            with open(dest_txt_path, 'w', encoding='utf8') as f2:
-                f2.write(f"[{lang}]{txt}")
-        
-        torch.save(ssl, f"{hubert_folder}/{fn}.pth")
+                dest_txt_path = f"{txt_folder}/{fn}.txt"
+                with open(i, 'r', encoding='utf8') as f:
+                    txt = f.read()
+                    with open(dest_txt_path, 'w', encoding='utf8') as f2:
+                        f2.write(f"[{lang}]{txt}")
+            except:
+                print(f"Error while processing {base_name}.flac")
 def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProPlus.pth"):
     hps = utils.get_hparams_from_file("./configs/s2v2ProPlus.json")
     vq_model = SynthesizerTrn(
@@ -118,6 +122,12 @@ if __name__ == '__main__':
         help="Dataset Language"
     )
     parser.add_argument(
+        "--dataset", 
+        type=str, 
+        default="Emilia", 
+        help="Dataset Source"
+    )
+    parser.add_argument(
         "-s", 
         "--step", 
         type=int, 
@@ -133,6 +143,6 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
     if args.step == 0:
-        prepare(args.output_dir, args.source_dir, args.lang, args.pretrained_model)
+        prepare(args.output_dir, args.source_dir, args.dataset, args.lang, args.pretrained_model)
     elif args.step == 1:
         process_semantic(args.output_dir)

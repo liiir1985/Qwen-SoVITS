@@ -21,7 +21,7 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
     # 将本地路径作为第一个参数传入 from_pretrained()
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype='auto',
+        dtype='auto',
         device_map="auto", # 自动分配模型到可用的 GPU/CPU
         trust_remote_code=True 
     )
@@ -73,7 +73,7 @@ def modify_base_model(output_dir, model_path):
     )
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype='auto',
+        dtype='auto',
         device_map="auto",
         trust_remote_code=True 
     )
@@ -101,7 +101,7 @@ class Qwen3Text2SemanticModel:
 
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype='auto',
+            dtype='auto',
             device_map="auto",
             trust_remote_code=True 
         )
@@ -120,11 +120,15 @@ class Qwen3Text2SemanticModel:
         generated_ids = self.model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            max_new_tokens=256,
+            max_new_tokens=10000,
+            temperature=0.8,
+            top_p=0.9,               # Top-P 采样
+            top_k=50,                # Top-K 采样（安全网）
+            do_sample=True,
             eos_token_id=self.tokenizer.eos_token_id
         )
 
-        response = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+        response = self.tokenizer.decode(generated_ids[0][input_ids.shape[1]:], skip_special_tokens=True)
         print("\n--- Model Response ---")
         print(response)
 
