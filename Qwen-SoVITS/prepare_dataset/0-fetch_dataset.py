@@ -8,6 +8,9 @@ import numpy as np
 import librosa
 import argparse
 from tqdm import tqdm
+import glob
+import re
+import zipfile
 
 def load_existing_ids(file_path) -> dict:
     """加载已记录的ID列表（如果文件存在）"""
@@ -54,6 +57,94 @@ def crawl_dataset(dataset_dir, dataset_source:str, lang:str,target_duration, sub
     
     processed_ids[dataset_source][lang] = [i for i in cur_id_bucket.values()]
     save_ids(database_path, processed_ids)
+
+def initialize_zip_count(base_fn):
+    """
+    在程序启动时调用，查找现有文件中最大的序号，并设置全局 zip_count。
+    """    
+    # 查找所有符合 BASE_FILENAME_XXX.zip 模式的文件
+    search_pattern = f"{base_fn}_*.zip"
+    existing_files = glob.glob(search_pattern)
+    
+    max_count = 0
+    
+    # 正则表达式用于提取文件名中的数字部分
+    # 例如：从 "llm_streaming_dataset_015.zip" 中提取 "015"
+    pattern = re.compile(f"{base_fn}_(\\d+)\\.zip")
+    
+    for filename in existing_files:
+        match = pattern.search(filename)
+        if match:
+            # 将匹配到的数字字符串转换为整数
+            current_count = int(match.group(1))
+            if current_count > max_count:
+                max_count = current_count
+                
+    # 从找到的最大序号基础上开始计数
+    zip_count = max_count
+    return zip_count
+
+MAX_SIZE_MB = 100
+MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
+
+def open_new_zip_file(zip_file, current_zip_path, zip_count, base_fn):
+    """关闭旧文件（如果有）并打开一个新的 ZIP 文件"""
+    
+    if zip_file:
+        zip_file.close()
+    # 使用 :03d 确保数字部分是三位数 (例如 001, 010, 100)
+    base_name = f"{base_fn}_{zip_count:03d}"
+    current_zip_path = f"{base_name}.zip"
+    current_txt_path = f"{base_name}.txt"
+    zip_file = zipfile.ZipFile(current_zip_path, 'w', zipfile.ZIP_DEFLATED)
+    return zip_file, current_zip_path, current_txt_path
+
+
+def pack_dataset(dataset_dir, dataset_source:str, lang:str, subset):
+    database_path = f"{dataset_dir}/processed_datas.json"
+    dataset_save_path = f"{dataset_dir}/{dataset_source}/{lang}/"
+    processed_ids = load_existing_ids(database_path)
+
+    cur_list = processed_ids.get(dataset_source, list())
+    if len(cur_list)>0:
+        lang_list = cur_list.get(lang)
+        if lang_list is None:            
+            lang_list = list()
+            cur_list[lang]=lang_list
+        cur_list = lang_list
+    else:
+        cur_list = list()
+        processed_ids[dataset_source] = {lang:cur_list}
+    
+    base_fn = f"{dataset_save_path}{lang}"
+    zip_cnt = initialize_zip_count(base_fn)
+    zip_cnt+=1
+    zip_file, current_zip_path, current_txt_path = open_new_zip_file(None, None, zip_cnt, base_fn)
+    txt_file = open(current_txt_path ,'w', encoding='utf-8')
+    for i in tqdm(cur_list, desc="Packing dataset"):
+        id = i['id']
+        old_txt_path = f"{dataset_save_path}{id}.txt"
+        old_audio_path = f"{dataset_save_path}{id}.flac"
+        if os.path.exists(old_audio_path):
+            i['zip_file'] = current_txt_path
+            with open(old_txt_path, 'r', encoding='utf-8') as f:
+                txt_file.write(f"{id}\t{f.read().replace("\n", "\\n")}\n")
+            zip_file.write(old_audio_path, f"{id}.flac")
+            os.remove(old_audio_path)
+            os.remove(old_txt_path)
+
+        if os.path.exists(current_zip_path) and os.path.getsize(current_zip_path) > MAX_SIZE_BYTES:
+            zip_cnt+=1
+            zip_file, current_zip_path, current_txt_path = open_new_zip_file(zip_file, current_zip_path, zip_cnt, base_fn)
+            if txt_file is not None:
+                txt_file.close()
+            txt_file = open(current_txt_path ,'w', encoding='utf-8')
+    if zip_file is not None:
+        zip_file.close()
+    if txt_file is not None:
+        txt_file.close()  
+    save_ids(database_path, processed_ids)
+
 def crawl_galgame(subset, cur_id_bucket:dict, lang, dataset_save_path,target_duration, total_secs):
     os.environ['HF_HOME'] = 'E:/hf_cache'
     dataset = load_dataset("joujiboi/Galgame-VisualNovel-Reupload", subset, split="train", streaming=True)
@@ -78,7 +169,7 @@ def crawl_galgame(subset, cur_id_bucket:dict, lang, dataset_save_path,target_dur
                     dest=sound_file_path
                 )            
             with open(f"{dataset_save_path}/{id}.txt", 'w', encoding='utf8') as f: f.write(text)
-            cur_id_bucket[id] = {'id':id,'duration':duration}
+            cur_id_bucket[id] = {'id':id,'duration':duration, 'subset': subset}
             if total_secs > target_duration:
                 break
 
@@ -175,7 +266,7 @@ if __name__ == '__main__':
         "-s", 
         "--dataset_source", 
         type=str, 
-        default="Emilia-YODAS", 
+        default="Emilia", 
         help="Dataset source"
     )
     parser.add_argument(
@@ -198,6 +289,14 @@ if __name__ == '__main__':
         default=120*60, 
         help="Dataset Language"
     )
+    parser.add_argument(
+        '--repack',
+        action='store_true',
+        default=True,
+        help='Repack the dataset to use zip file to store the files'
+    )
     args = parser.parse_args()
-
-    crawl_dataset(args.output_dir, args.dataset_source, args.lang, args.duration, args.dataset_subset)
+    if args.repack:
+        pack_dataset(args.output_dir, args.dataset_source, args.lang, args.dataset_subset)
+    else:
+        crawl_dataset(args.output_dir, args.dataset_source, args.lang, args.duration, args.dataset_subset)
