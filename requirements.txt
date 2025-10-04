@@ -8,3 +8,10 @@ transformers~=4.51
 librosa~=0.10.2
 accelerate~=1.10.1
 x_transformers
+jieba_fast
+jieba
+split-lang
+fast_langdetect>=0.3.1
+pyopenjtalk>=0.4.1
+wordsegment
+g2p_en

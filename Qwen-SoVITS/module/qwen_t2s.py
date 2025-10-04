@@ -34,15 +34,15 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=epoch,
-        learning_rate=2e-5,  # 适用于全参数微调 (或 LoRA微调可尝试 1e-4)    
+        learning_rate=3e-6,  # 适用于全参数微调 (或 LoRA微调可尝试 1e-4)    
         # 【核心调整 2：使用 Cosine 调度器】
         lr_scheduler_type="cosine",    
         # 【核心调整 3：设置 Warmup】
         warmup_ratio=0.05, # 前 5% 的步数用于学习率爬升
         per_device_train_batch_size=batch_size,    # use batch size 2 per GPU
         gradient_accumulation_steps=gradient_acc,    # no grad accumulation (since batch 2 is fine)
-        logging_steps=20,                 # log every 20 steps
-        save_strategy="epoch", 
+        logging_steps=5,                 # log every 20 steps
+        save_strategy="steps", 
         save_steps=save_epoch,                     # no checkpoints (not needed for demo)
         save_total_limit=max_ckpt, 
         report_to=[],                     # no W&B or HF logging
@@ -92,7 +92,7 @@ def modify_base_model(output_dir, model_path):
 
 class Qwen3Text2SemanticModel:
     tokenizer:any
-    model:any
+    model:AutoModelForCausalLM
     t2s_token_start:any
     def __init__(self, model_path):
         print(f"Loading model on device: {device}")
@@ -104,7 +104,7 @@ class Qwen3Text2SemanticModel:
 
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            dtype='auto',
+            torch_dtype='auto',
             device_map="auto",
             trust_remote_code=True 
         )
@@ -123,7 +123,8 @@ class Qwen3Text2SemanticModel:
         generated_ids = self.model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            max_new_tokens=10000,
+            max_new_tokens=1000,
+            max_length=1000,
             temperature=0.8,
             top_p=0.9,               # Top-P 采样
             top_k=50,                # Top-K 采样（安全网）
@@ -131,9 +132,14 @@ class Qwen3Text2SemanticModel:
             eos_token_id=self.tokenizer.eos_token_id
         )
 
-        response = self.tokenizer.decode(generated_ids[0][input_ids.shape[1]:], skip_special_tokens=True)
+        result = generated_ids[0][input_ids.shape[1]:]
+        if result[-1] == self.tokenizer.eos_token_id:
+            result = result[:-1]
+
+        response = self.tokenizer.decode(result, skip_special_tokens=True)
         print("\n--- Model Response ---")
         print(response)
+        return result - self.t2s_token_start
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -150,27 +156,27 @@ if __name__ == '__main__':
         "-b", 
         "--batch_size", 
         type=int, 
-        default=2, 
+        default=1, 
         help="Batch size"
     )
     parser.add_argument(
         "-e", 
         "--epoch", 
         type=int, 
-        default=5, 
+        default=100, 
         help="Epochs to train"
     )
     parser.add_argument(
         "-ga", 
         "--gradient_acc", 
         type=int, 
-        default=4, 
+        default=1, 
         help="Gradient accumulation steps to train"
     )
     parser.add_argument(
         "--save_epoch", 
         type=int, 
-        default=5, 
+        default=400, 
         help="Save ckpt every n epochs"
     )
     parser.add_argument(
