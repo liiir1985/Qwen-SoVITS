@@ -3,7 +3,7 @@ import torch
 from data.qwen_t2s_dataset import Qwen3Text2SemanticDataset
 import argparse
 import os
-
+import datetime
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
 def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_epoch, max_ckpt):
@@ -30,22 +30,24 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
     model.to(device)
 
     print(f"✅ Qwen3 0.6B 模型已从本地路径 {model_path} 成功加载。")
-
+    current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"my_model_run_{current_time}" # 例如: my_model_run_20251006_230530
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=epoch,
-        learning_rate=3e-6,  # 适用于全参数微调 (或 LoRA微调可尝试 1e-4)    
+        learning_rate=4e-5,  # 适用于全参数微调 (或 LoRA微调可尝试 1e-4)    
         # 【核心调整 2：使用 Cosine 调度器】
         lr_scheduler_type="cosine",    
         # 【核心调整 3：设置 Warmup】
         warmup_ratio=0.05, # 前 5% 的步数用于学习率爬升
         per_device_train_batch_size=batch_size,    # use batch size 2 per GPU
         gradient_accumulation_steps=gradient_acc,    # no grad accumulation (since batch 2 is fine)
-        logging_steps=5,                 # log every 20 steps
-        save_strategy="steps", 
+        logging_steps=10,                 # log every 20 steps
+        logging_dir=f'./logs/tensorboard/{run_name}',
+        save_strategy="epoch", 
         save_steps=save_epoch,                     # no checkpoints (not needed for demo)
         save_total_limit=max_ckpt, 
-        report_to=[],                     # no W&B or HF logging
+        report_to=["tensorboard"],                     # no W&B or HF logging
         bf16=True,                        # Qwen3 is using bf16 training
         disable_tqdm=False,               # ← re-enable tqdm bars
         remove_unused_columns=False,      # <— keep extra columns like prompt_len
@@ -156,14 +158,14 @@ if __name__ == '__main__':
         "-b", 
         "--batch_size", 
         type=int, 
-        default=1, 
+        default=2, 
         help="Batch size"
     )
     parser.add_argument(
         "-e", 
         "--epoch", 
         type=int, 
-        default=100, 
+        default=6, 
         help="Epochs to train"
     )
     parser.add_argument(
