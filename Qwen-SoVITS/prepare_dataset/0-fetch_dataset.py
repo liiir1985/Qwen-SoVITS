@@ -12,6 +12,8 @@ import glob
 import re
 import zipfile
 
+PROXY_ADDRESS = "http://127.0.0.1:10808" 
+
 def load_existing_ids(file_path) -> dict:
     """加载已记录的ID列表（如果文件存在）"""
     if os.path.exists(file_path):
@@ -26,7 +28,6 @@ def save_ids(file_path, ids):
         json.dump(ids, f, ensure_ascii=False, indent=2)
 
 def crawl_dataset(dataset_dir, dataset_source:str, lang:str,target_duration, subset):
-    dataset_dir = "dataset"
     os.makedirs(dataset_dir, exist_ok=True)    
     database_path = f"{dataset_dir}/processed_datas.json"
     dataset_save_path = f"{dataset_dir}/{dataset_source}/{lang}/"
@@ -49,11 +50,17 @@ def crawl_dataset(dataset_dir, dataset_source:str, lang:str,target_duration, sub
     for i in cur_list:
         total_secs+=i['duration']    
         cur_id_bucket[i['id']] = i
-    
+
+    os.environ['http_proxy'] = PROXY_ADDRESS
+    os.environ['https_proxy'] = PROXY_ADDRESS
+
     if "Emilia" in dataset_source:
         crawl_emilia(dataset_source, cur_id_bucket,lang, dataset_save_path, target_duration, total_secs)
     elif dataset_source == "Galgame":
         crawl_galgame(subset, cur_id_bucket,lang, dataset_save_path, target_duration, total_secs)
+    
+    del os.environ['http_proxy']
+    del os.environ['https_proxy']
     
     processed_ids[dataset_source][lang] = [i for i in cur_id_bucket.values()]
     save_ids(database_path, processed_ids)
@@ -71,17 +78,22 @@ def initialize_zip_count(base_fn):
     # 正则表达式用于提取文件名中的数字部分
     # 例如：从 "llm_streaming_dataset_015.zip" 中提取 "015"
     pattern = re.compile(f"{base_fn}_(\\d+)\\.zip")
+    is_max_file_small = False
     
     for filename in existing_files:
-        match = pattern.search(filename)
+        match = pattern.search(filename.replace("\\","/"))
         if match:
             # 将匹配到的数字字符串转换为整数
             current_count = int(match.group(1))
             if current_count > max_count:
                 max_count = current_count
+                if os.path.exists(filename) and os.path.getsize(filename) < MAX_SIZE_BYTES:
+                    is_max_file_small = True
                 
     # 从找到的最大序号基础上开始计数
     zip_count = max_count
+    if is_max_file_small:
+        zip_count = zip_count -1
     return zip_count
 
 MAX_SIZE_MB = 100
@@ -96,7 +108,7 @@ def open_new_zip_file(zip_file, current_zip_path, zip_count, base_fn):
     base_name = f"{base_fn}_{zip_count:03d}"
     current_zip_path = f"{base_name}.zip"
     current_txt_path = f"{base_name}.txt"
-    zip_file = zipfile.ZipFile(current_zip_path, 'w', zipfile.ZIP_DEFLATED)
+    zip_file = zipfile.ZipFile(current_zip_path, 'a', zipfile.ZIP_DEFLATED)
     return zip_file, current_zip_path, current_txt_path
 
 
@@ -148,7 +160,12 @@ def pack_dataset(dataset_dir, dataset_source:str, lang:str, subset):
 def crawl_galgame(subset, cur_id_bucket:dict, lang, dataset_save_path,target_duration, total_secs):
     os.environ['HF_HOME'] = 'E:/hf_cache'
     dataset = load_dataset("joujiboi/Galgame-VisualNovel-Reupload", subset, split="train", streaming=True)
-    dataset = dataset.shuffle(seed=11223, buffer_size=10000)
+    #dataset = dataset.shuffle(seed=11223, buffer_size=10000)
+    base_fn = f"{dataset_save_path}{subset}"
+    zip_cnt = initialize_zip_count(base_fn)
+    zip_cnt+=1
+    zip_file, current_zip_path, current_txt_path = open_new_zip_file(None, None, zip_cnt, base_fn)
+    txt_file = open(current_txt_path ,'a', encoding='utf-8')
     with tqdm(total=target_duration, desc="Dataset crawling", unit="Secs") as t:
         t.update(total_secs)
         for sample in dataset:
@@ -167,11 +184,26 @@ def crawl_galgame(subset, cur_id_bucket:dict, lang, dataset_save_path,target_dur
                 encoder = AudioEncoder(samples=data.data, sample_rate=data.sample_rate)
                 encoder.to_file(
                     dest=sound_file_path
-                )            
-            with open(f"{dataset_save_path}/{id}.txt", 'w', encoding='utf8') as f: f.write(text)
-            cur_id_bucket[id] = {'id':id,'duration':duration, 'subset': subset}
+                )
+            txt_file.write(f"{id}\t{text.replace("\n", "\\n")}\n")
+            zip_file.write(sound_file_path, f"{id}.flac")            
+            os.remove(sound_file_path)
+
+            cur_id_bucket[id] = {'id':id,'duration':duration, 'subset': subset, 'zip_file': os.path.relpath(current_txt_path, start=dataset_save_path)}
+            if os.path.exists(current_zip_path) and os.path.getsize(current_zip_path) > MAX_SIZE_BYTES:
+                zip_cnt+=1
+                zip_file, current_zip_path, current_txt_path = open_new_zip_file(zip_file, current_zip_path, zip_cnt, base_fn)
+                if txt_file is not None:
+                    txt_file.close()
+                txt_file = open(current_txt_path ,'a', encoding='utf-8')
+
+            #with open(f"{dataset_save_path}/{id}.txt", 'w', encoding='utf8') as f: f.write(text)
             if total_secs > target_duration:
                 break
+    if zip_file is not None:
+        zip_file.close()
+    if txt_file is not None:
+        txt_file.close()  
 
 def crawl_emilia(dataset_source, cur_id_bucket:dict, lang, dataset_save_path,target_duration, total_secs):
     os.environ['HF_HOME'] = 'E:/hf_cache'
@@ -185,8 +217,13 @@ def crawl_emilia(dataset_source, cur_id_bucket:dict, lang, dataset_save_path,tar
         path = f"{dataset_source}/JA/*.tar" # Same for Emilia-YODAS; just replace "Emilia/" with "Emilia-YODAS/"
         split_name = "ja"
     dataset = load_dataset("amphion/Emilia-Dataset",data_files={split_name: path}, split=split_name, streaming=True)    
-    dataset = dataset.shuffle(seed=11223, buffer_size=10000)
-    
+    #dataset = dataset.shuffle(seed=11223, buffer_size=10000)
+    base_fn = f"{dataset_save_path}{lang}"
+    zip_cnt = initialize_zip_count(base_fn)
+    zip_cnt+=1
+    zip_file, current_zip_path, current_txt_path = open_new_zip_file(None, None, zip_cnt, base_fn)
+    txt_file = open(current_txt_path ,'a', encoding='utf-8')
+
     with tqdm(total=target_duration, desc="Dataset crawling", unit="Secs") as t:
         t.update(total_secs)
         for sample in dataset:
@@ -214,12 +251,25 @@ def crawl_emilia(dataset_source, cur_id_bucket:dict, lang, dataset_save_path,tar
                 encoder = AudioEncoder(samples=data.data, sample_rate=data.sample_rate)
                 encoder.to_file(
                     dest=sound_file_path
-                )            
-            with open(f"{dataset_save_path}/{id}.txt", 'w', encoding='utf8') as f: f.write(text)
-            cur_id_bucket[id] = {'id':id,'duration':duration}
+                )
+            txt_file.write(f"{id}\t{text.replace("\n", "\\n")}\n")
+            zip_file.write(sound_file_path, f"{id}.flac")            
+            os.remove(sound_file_path)
+            
+            cur_id_bucket[id] = {'id':id,'duration':duration, 'zip_file': os.path.relpath(current_txt_path, start=dataset_save_path)}
+            if os.path.exists(current_zip_path) and os.path.getsize(current_zip_path) > MAX_SIZE_BYTES:
+                zip_cnt+=1
+                zip_file, current_zip_path, current_txt_path = open_new_zip_file(zip_file, current_zip_path, zip_cnt, base_fn)
+                if txt_file is not None:
+                    txt_file.close()
+                txt_file = open(current_txt_path ,'a', encoding='utf-8')
+            #with open(f"{dataset_save_path}/{id}.txt", 'w', encoding='utf8') as f: f.write(text)
             if total_secs > target_duration:
                 break
-    
+    if zip_file is not None:
+        zip_file.close()
+    if txt_file is not None:
+        txt_file.close()  
     
 def compute_hubert(data):    
     if torch.cuda.is_available():
@@ -259,14 +309,14 @@ if __name__ == '__main__':
         "-o", 
         "--output_dir", 
         type=str, 
-        default="./dataset", 
+        default="Y:/AI/TTS/dataset", 
         help="Path to save the dataset"
     )
     parser.add_argument(
         "-s", 
         "--dataset_source", 
         type=str, 
-        default="Emilia", 
+        default="Galgame", 
         help="Dataset source"
     )
     parser.add_argument(
@@ -286,13 +336,13 @@ if __name__ == '__main__':
     parser.add_argument(
         "--duration", 
         type=int, 
-        default=120*60, 
+        default=30*60*60, 
         help="Dataset Language"
     )
     parser.add_argument(
         '--repack',
         action='store_true',
-        default=True,
+        default=False,
         help='Repack the dataset to use zip file to store the files'
     )
     args = parser.parse_args()

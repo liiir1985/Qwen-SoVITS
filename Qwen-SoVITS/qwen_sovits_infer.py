@@ -8,7 +8,7 @@ from sovits_infer import SovitsSemantic2AudioModel
 import os
 import soundfile as sf
 
-t2s_model = Qwen3Text2SemanticModel("./logs/s1/checkpoint-5/")
+t2s_model = Qwen3Text2SemanticModel("./pretrained_models/qwen3")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 cnhubert.cnhubert_base_path = "./pretrained_models/chinese-hubert-base"
@@ -36,9 +36,9 @@ s2a_model = SovitsSemantic2AudioModel("./pretrained_models/s2Gv2ProPlus.pth", hu
 
 
 
-audio_path="./dataset/Emilia/ja/JA_B00002_S00054_W000085.flac"
+audio_path="./dataset/01-00-a00-0090__0verflow_Shiny_Days.flac"
 
-synthesis_result = s2a_model.get_tts_wav(audio_path, "私はとても感動しています私はとても感動しています", "ja", "女の子がデート中に使えるセリフには、「君と一緒にいると楽しいな」のように相手に好意を伝えるものや、「さんとは自然体でいられる」","ja")
+synthesis_result = s2a_model.get_tts_wav(audio_path, "はぁ……ご飯食べた？おかゆでも作ろうか？", "ja", "目の前がぐるぐるしてるぅ……あぅ？キッチン借りるね","ja")
 print(synthesis_result)
 result_list = list(synthesis_result)
 
