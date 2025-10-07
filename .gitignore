@@ -182,3 +182,4 @@ cython_debug/
 Qwen-SoVITS/dataset/
 Qwen-SoVITS/logs/
 Qwen-SoVITS/pretrained_models/
+/Qwen-SoVITS/wandb

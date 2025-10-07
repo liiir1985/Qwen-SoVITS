@@ -16,3 +16,4 @@ pyopenjtalk>=0.4.1
 wordsegment
 g2p_en
 tensorboardX
+wandb

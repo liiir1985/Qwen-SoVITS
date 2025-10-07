@@ -4,6 +4,7 @@ import base64
 import numpy as np
 import torch
 from tqdm import tqdm
+import random
 
 LOCAL_MODEL_PATH = "./pretrained_models/qwen3" 
 
@@ -12,14 +13,17 @@ class Qwen3Text2SemanticDataset(Dataset):
     dataset:list
     tokenizer:any
     t2s_token_start:int
+    random_mask_semantic:bool
     def __init__(
              self,
              semantic_path: str,
-             tokenizer
+             tokenizer,
+             random_mask_semantic=True
     ) -> None:
         super().__init__()
         self.tokenizer = tokenizer
         self.dataset = []
+        self.random_mask_semantic = random_mask_semantic
         eos = torch.tensor(tokenizer.eos_token_id, dtype=torch.int64).unsqueeze(0)
         self.t2s_token_start = tokenizer.convert_tokens_to_ids("<t2s_0>")
         with open(semantic_path, 'r', encoding='utf-8') as f:
@@ -60,6 +64,10 @@ class Qwen3Text2SemanticDataset(Dataset):
         # Mask out prompt part (all tokens up to and including "### Response:\n")
         for i, b in enumerate(batch):
             prompt_len = b["prompt_len"]  # length of prompt in tokens
-            labels[i, :prompt_len] = -100  # ignore prompt tokens in loss
+            if self.random_mask_semantic and random.randrange(100) < 50:
+                random_semantic = random.randrange(int((input_ids_list[i].shape[0] - prompt_len) / 1.5))
+            else:
+                random_semantic = 0
+            labels[i, :prompt_len + random_semantic] = -100  # ignore prompt tokens in loss
         return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
 

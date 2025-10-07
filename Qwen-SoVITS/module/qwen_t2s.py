@@ -6,7 +6,7 @@ import os
 import datetime
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_epoch, max_ckpt):
+def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_epoch, max_ckpt, random_mask):
     print(f"Loading model on device: {device}")
 
     # 2. 加载 Tokenizer (分词器)
@@ -15,7 +15,7 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
         trust_remote_code=True # 尽管是从本地加载，但 Qwen 模型建议保留此参数
     )
 
-    dataset = Qwen3Text2SemanticDataset("./logs/semantic_pairs.txt", tokenizer)
+    dataset = Qwen3Text2SemanticDataset("./logs/semantic_pairs.txt", tokenizer, random_mask)
 
     # 3. 加载 Model (模型权重)
     # 将本地路径作为第一个参数传入 from_pretrained()
@@ -31,7 +31,8 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
 
     print(f"✅ Qwen3 0.6B 模型已从本地路径 {model_path} 成功加载。")
     current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"my_model_run_{current_time}" # 例如: my_model_run_20251006_230530
+    os.environ["WANDB_PROJECT"] = "Qwen-Sovits"
+    run_name = f"qwen_sovits_run_{current_time}" # 例如: my_model_run_20251006_230530
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=epoch,
@@ -44,10 +45,11 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
         gradient_accumulation_steps=gradient_acc,    # no grad accumulation (since batch 2 is fine)
         logging_steps=10,                 # log every 20 steps
         logging_dir=f'./logs/tensorboard/{run_name}',
+        run_name=run_name,
         save_strategy="epoch", 
         save_steps=save_epoch,                     # no checkpoints (not needed for demo)
         save_total_limit=max_ckpt, 
-        report_to=["tensorboard"],                     # no W&B or HF logging
+        report_to=["wandb"],                     # no W&B or HF logging
         bf16=True,                        # Qwen3 is using bf16 training
         disable_tqdm=False,               # ← re-enable tqdm bars
         remove_unused_columns=False,      # <— keep extra columns like prompt_len
@@ -114,7 +116,7 @@ class Qwen3Text2SemanticModel:
         self.model.to(device)
     
     def infer(self, prompt:str, ref_txt:str, ref_semantic:torch.Tensor):
-        text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}.{prompt}}}<|im_end|>\n<|im_start|>assistant\n"
+        text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}、{prompt}}}<|im_end|>\n<|im_start|>assistant\n"
         ref_semantic = ref_semantic + self.t2s_token_start
         txt_ids = self.tokenizer([text], return_tensors="pt").to('cpu')
         input_ids = txt_ids.data['input_ids']
@@ -141,7 +143,8 @@ class Qwen3Text2SemanticModel:
         response = self.tokenizer.decode(result, skip_special_tokens=True)
         print("\n--- Model Response ---")
         print(response)
-        return result - self.t2s_token_start
+        result = result - self.t2s_token_start
+        return result[result >= 0]
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -201,11 +204,17 @@ if __name__ == '__main__':
         default=False,
         help='Modify the base model to adapt the semantic tokens'
     )
+    parser.add_argument(
+        '--random_mask',
+        action='store_true',
+        default=False,
+        help='Random mask the semantic tokens to act as part of the prompt'
+    )
     args = parser.parse_args()
     if args.modify_base_model:
         modify_base_model(args.output_dir, args.pretrained_model)
     else:
-        start_train(args.output_dir, args.pretrained_model, args.batch_size, args.gradient_acc, args.epoch,args.save_epoch,args.max_ckpt)
+        start_train(args.output_dir, args.pretrained_model, args.batch_size, args.gradient_acc, args.epoch,args.save_epoch,args.max_ckpt, args.random_mask)
 # --- 4. 运行推理测试 ---
 # text = "how are you"
 # model_inputs = tokenizer([text], return_tensors="pt").to(device)
