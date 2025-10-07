@@ -87,8 +87,7 @@ def initialize_zip_count(base_fn):
             current_count = int(match.group(1))
             if current_count > max_count:
                 max_count = current_count
-                if os.path.exists(filename) and os.path.getsize(filename) < MAX_SIZE_BYTES:
-                    is_max_file_small = True
+                is_max_file_small = os.path.exists(filename) and os.path.getsize(filename) < MAX_SIZE_BYTES
                 
     # 从找到的最大序号基础上开始计数
     zip_count = max_count
