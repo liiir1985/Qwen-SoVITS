@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 import random
+import glob
 
 LOCAL_MODEL_PATH = "./pretrained_models/qwen3" 
 
@@ -26,25 +27,31 @@ class Qwen3Text2SemanticDataset(Dataset):
         self.random_mask_semantic = random_mask_semantic
         eos = torch.tensor(tokenizer.eos_token_id, dtype=torch.int64).unsqueeze(0)
         self.t2s_token_start = tokenizer.convert_tokens_to_ids("<t2s_0>")
-        with open(semantic_path, 'r', encoding='utf-8') as f:
-            for line in tqdm(f, desc="Loading dataset"):
-                arr = line.split("\t")
-                prompt = f"<|im_start|>user\n语音转文本任务：{{{arr[0]}}}<|im_end|>\n<|im_start|>assistant\n"
-                txt_ids = tokenizer([prompt], return_tensors="pt").to('cpu')
-                txt_ids = txt_ids.data['input_ids'].flatten()
-                buffer = base64.b64decode(arr[1])
-                semantic_np = np.frombuffer(buffer, dtype=np.int16).copy()
-                semantic_ids = torch.from_numpy(semantic_np).to(torch.int64)
-                semantic_ids = semantic_ids + self.t2s_token_start
-                final = torch.cat([txt_ids, semantic_ids, eos], dim=0)
-                #attention_mask = (final != tokenizer.pad_token_id).long()
-                # Create labels (copy of input_ids)
-                #labels = final.clone()
-                # Mask out prompt part (all tokens up to and including "### Response:\n")
-                #labels[0, :txt_ids.shape[0]] = -100
-                self.dataset.append({
-                    "input_ids": final, "prompt_len": txt_ids.shape[0]
-                })
+
+        files = glob.glob(f"{semantic_path}/*.txt")
+        f_cnt = 1
+        for i in files:
+            with open(i, 'r', encoding='utf-8') as f:
+                for line in tqdm(f, desc=f"Loading dataset({f_cnt}/{len(files)})"):
+                    arr = line.split("\t")
+                    prompt = f"<|im_start|>user\n语音转文本任务：{{{arr[0]}}}<|im_end|>\n<|im_start|>assistant\n"
+                    txt_ids = tokenizer([prompt], return_tensors="pt").to('cpu')
+                    txt_ids = txt_ids.data['input_ids'].flatten()
+                    buffer = base64.b64decode(arr[2])
+                    semantic_np = np.frombuffer(buffer, dtype=np.int16).copy()
+                    semantic_ids = torch.from_numpy(semantic_np).to(torch.int64)
+                    semantic_ids = semantic_ids + self.t2s_token_start
+                    final = torch.cat([txt_ids, semantic_ids, eos], dim=0)
+                    #attention_mask = (final != tokenizer.pad_token_id).long()
+                    # Create labels (copy of input_ids)
+                    #labels = final.clone()
+                    # Mask out prompt part (all tokens up to and including "### Response:\n")
+                    #labels[0, :txt_ids.shape[0]] = -100
+                    self.dataset.append({
+                        "input_ids": final, "prompt_len": txt_ids.shape[0], "lang": arr[1]
+                    })
+            f_cnt+=1
+        
 
         print(f"Dataset loaded with {len(self.dataset)} records")
 

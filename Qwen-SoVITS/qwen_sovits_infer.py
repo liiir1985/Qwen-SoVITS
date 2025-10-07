@@ -38,7 +38,7 @@ s2a_model = SovitsSemantic2AudioModel("./pretrained_models/s2Gv2ProPlus.pth", hu
 
 audio_path="./dataset/01-00-a00-0090__0verflow_Shiny_Days.flac"
 
-synthesis_result = s2a_model.get_tts_wav(audio_path, "はぁ……ご飯食べた？おかゆでも作ろうか？", "ja", "目の前がぐるぐるしてるぅ……あぅ？キッチン借りるね","ja")
+synthesis_result = s2a_model.get_tts_wav(audio_path, "[ja]はぁ……ご飯食べた？おかゆでも作ろうか？", "ja", "目の前がぐるぐるしてるぅ……あぅ？キッチン借りるね","ja")
 print(synthesis_result)
 result_list = list(synthesis_result)
 

@@ -12,6 +12,9 @@ import utils
 from utils import load_audio, get_audio_hubert
 from module.models import SynthesizerTrn
 import base64
+import zipfile
+import io
+import shutil
 
 if torch.cuda.is_available():
     device = "cuda:0"
@@ -31,12 +34,22 @@ def prepare(output_dir, src_dir, dataset, lang, model_dir, sr=32000):
     for i in tqdm(files, desc="Processing audios"):
         base_name, ext = os.path.splitext(i)
         fn = os.path.basename(base_name)
-        hubert_path = f"{hubert_folder}/{fn}.pth"
-        
-        if not os.path.exists(hubert_path):
+
+        dst_txt_path = f"{txt_folder}/{dataset}_{lang}_{fn}.txt"
+        if os.path.exists(dst_txt_path):
+            continue
+        src_txt_file = open(i, 'r', encoding='utf-8')
+        src_zip_file = zipfile.ZipFile(f"{base_name}.zip", 'r')
+        dst_zip_file = zipfile.ZipFile(f"{hubert_folder}/{dataset}_{lang}_{fn}.zip", 'w', zipfile.ZIP_DEFLATED)
+        dst_txt_file = open(dst_txt_path, 'w', encoding='utf-8')
+        for line in src_txt_file:
+            arr = line.split('\t')
+            audio_bytes = src_zip_file.read(f"{arr[0]}.flac")
+            audio_buffer = io.BytesIO(audio_bytes)
+            hubert_path = f"{arr[0]}.pth"            
+            
             try:
-                audio_path = f"{base_name}.flac"        
-                final_data = load_audio(audio_path, sr)
+                final_data = load_audio(audio_buffer, sr)
                 tmp_max = np.abs(final_data).max()
                 if tmp_max > 2.2:
                     print("%s-filtered,%s" % (i, tmp_max))
@@ -44,16 +57,22 @@ def prepare(output_dir, src_dir, dataset, lang, model_dir, sr=32000):
                 ssl = get_audio_hubert(model, final_data, sr)
                 if np.isnan(ssl.detach().numpy()).sum() != 0:
                     print("nan filtered:%s" % i)
-                    continue        
-                torch.save(ssl, hubert_path)
+                    continue
+                buffer = io.BytesIO()
+                torch.save(ssl, buffer)
+                buffer.seek(0)
+
+                dst_zip_file.writestr(hubert_path, buffer.read())
 
                 dest_txt_path = f"{txt_folder}/{fn}.txt"
-                with open(i, 'r', encoding='utf8') as f:
-                    txt = f.read()
-                    with open(dest_txt_path, 'w', encoding='utf8') as f2:
-                        f2.write(f"[{lang}]{txt}")
-            except:
-                print(f"Error while processing {base_name}.flac")
+                dst_txt_file.write(f"{arr[0]}\t{lang}\t{arr[1]}")
+            except Exception as ex:
+                print(f"Error while processing {base_name}.flac\n{ex}")
+        
+        src_txt_file.close()
+        src_zip_file.close()
+        dst_txt_file.close()
+        dst_zip_file.close()
 def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProPlus.pth"):
     hps = utils.get_hparams_from_file("./configs/s2v2ProPlus.json")
     vq_model = SynthesizerTrn(
@@ -72,28 +91,39 @@ def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProP
     )
     txt_folder = f"{output_dir}/1-txts"
     hubert_folder = f"{output_dir}/2-huberts"
+    semantic_folder = f"{output_dir}/3-semantic_pairs"
+    os.makedirs(semantic_folder, exist_ok=True)
     files = glob.glob(f"{txt_folder}/*.txt")
     max_code = 0
     min_code = 10000
-    with open(f"{output_dir}/semantic_pairs.txt", 'w', encoding='utf-8') as fw:
-        for i in tqdm(files, desc="Processing audios"):
-            base_name, ext = os.path.splitext(i)
-            fn = os.path.basename(base_name)
+    for i in tqdm(files, desc="Processing audios"):
+        base_name, ext = os.path.splitext(i)
+        fn = os.path.basename(base_name)
 
-            ssl_content = torch.load(f"{hubert_folder}/{fn}.pth", map_location="cpu")
-            ssl_content = ssl_content.to(device)
-            codes = vq_model.extract_latent(ssl_content)
-            cmax = codes.max()
-            cmin = codes.min()
-            if cmax > max_code:
-                max_code = cmax
-            if cmin < min_code:
-                min_code = cmin
-            i16_codes = codes.cpu().to(torch.int16).numpy()
-            base64_str = base64.b64encode(i16_codes.tobytes()).decode('utf-8')
-            with open(i,'r', encoding='utf8') as f:
-                txt = f.read()
-            fw.write("%s\t%s\n" % (txt, base64_str))
+        src_txt_file = open(i, 'r', encoding='utf-8')
+        src_zip_file = zipfile.ZipFile(f"{hubert_folder}/{fn}.zip", 'r')
+        with open(f"{semantic_folder}/{fn}.txt", 'w', encoding='utf-8') as fw:        
+            for line in src_txt_file:
+                arr = line.split('\t')
+                if arr[2][-1] == "\n":
+                    arr[2] = arr[2][:-1]
+                hubert_file = src_zip_file.open(f"{arr[0]}.pth")
+                ssl_content = torch.load(hubert_file, map_location="cpu")
+                ssl_content = ssl_content.to(device)
+                hubert_file.close()
+                codes = vq_model.extract_latent(ssl_content)
+                cmax = codes.max()
+                cmin = codes.min()
+                if cmax > max_code:
+                    max_code = cmax
+                if cmin < min_code:
+                    min_code = cmin
+                i16_codes = codes.cpu().to(torch.int16).numpy()
+                base64_str = base64.b64encode(i16_codes.tobytes()).decode('utf-8')
+                fw.write(f"{arr[2]}\t{arr[1]}\t{base64_str}\n")
+
+        src_txt_file.close()
+        src_zip_file.close()
     print(f"min code: {min_code}, max code:{max_code}")
 
 if __name__ == '__main__':
@@ -111,20 +141,20 @@ if __name__ == '__main__':
         "-src", 
         "--source_dir", 
         type=str, 
-        default="./dataset", 
+        default="Y:/AI/TTS/dataset", 
         help="Dataset source"
     )
     parser.add_argument(
         "-l", 
         "--lang", 
         type=str, 
-        default="en", 
+        default="ja", 
         help="Dataset Language"
     )
     parser.add_argument(
         "--dataset", 
         type=str, 
-        default="Emilia", 
+        default="Galgame", 
         help="Dataset Source"
     )
     parser.add_argument(

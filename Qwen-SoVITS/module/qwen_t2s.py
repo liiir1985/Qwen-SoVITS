@@ -15,7 +15,7 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
         trust_remote_code=True # 尽管是从本地加载，但 Qwen 模型建议保留此参数
     )
 
-    dataset = Qwen3Text2SemanticDataset("./logs/semantic_pairs.txt", tokenizer, random_mask)
+    dataset = Qwen3Text2SemanticDataset("./logs/3-semantic_pairs", tokenizer, random_mask)
 
     # 3. 加载 Model (模型权重)
     # 将本地路径作为第一个参数传入 from_pretrained()
@@ -129,9 +129,9 @@ class Qwen3Text2SemanticModel:
             attention_mask=attention_mask,
             max_new_tokens=1000,
             max_length=1000,
-            temperature=0.8,
-            top_p=0.9,               # Top-P 采样
-            top_k=50,                # Top-K 采样（安全网）
+            temperature=0.6,
+            top_p=0.5,               # Top-P 采样
+            top_k=10,                # Top-K 采样（安全网）
             do_sample=True,
             eos_token_id=self.tokenizer.eos_token_id
         )
