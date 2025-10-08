@@ -11,6 +11,7 @@ from tqdm import tqdm
 import glob
 import re
 import zipfile
+import io
 
 PROXY_ADDRESS = "http://127.0.0.1:10808" 
 
@@ -178,15 +179,17 @@ def crawl_galgame(subset, cur_id_bucket:dict, lang, dataset_save_path,target_dur
             total_secs += duration
             t.update(duration)
 
-            sound_file_path = f"{dataset_save_path}/{id}.flac"
-            if not os.path.exists(sound_file_path):                
-                encoder = AudioEncoder(samples=data.data, sample_rate=data.sample_rate)
-                encoder.to_file(
-                    dest=sound_file_path
-                )
+            buffer = io.BytesIO()
+
+            sound_file_path = f"{id}.flac"
+            decoder = sample['audio']
+            data = decoder.get_all_samples()
+
+            encoder = AudioEncoder(samples=data.data, sample_rate=data.sample_rate)
+            encoder.to_file_like(buffer, "flac")
+            buffer.seek(0)
             txt_file.write(f"{id}\t{text.replace("\n", "\\n")}\n")
-            zip_file.write(sound_file_path, f"{id}.flac")            
-            os.remove(sound_file_path)
+            zip_file.writestr(sound_file_path, buffer.read())   
 
             cur_id_bucket[id] = {'id':id,'duration':duration, 'subset': subset, 'zip_file': os.path.relpath(current_txt_path, start=dataset_save_path)}
             if os.path.exists(current_zip_path) and os.path.getsize(current_zip_path) > MAX_SIZE_BYTES:
@@ -241,19 +244,17 @@ def crawl_emilia(dataset_source, cur_id_bucket:dict, lang, dataset_save_path,tar
             
             total_secs += duration
             t.update(duration)
+            buffer = io.BytesIO()
 
-            sound_file_path = f"{dataset_save_path}/{id}.flac"
-            if not os.path.exists(sound_file_path):
-                decoder = sample['mp3']
-                data = decoder.get_all_samples()
+            sound_file_path = f"{id}.flac"
+            decoder = sample['mp3']
+            data = decoder.get_all_samples()
 
-                encoder = AudioEncoder(samples=data.data, sample_rate=data.sample_rate)
-                encoder.to_file(
-                    dest=sound_file_path
-                )
+            encoder = AudioEncoder(samples=data.data, sample_rate=data.sample_rate)
+            encoder.to_file_like(buffer, "flac")
+            buffer.seek(0)
             txt_file.write(f"{id}\t{text.replace("\n", "\\n")}\n")
-            zip_file.write(sound_file_path, f"{id}.flac")            
-            os.remove(sound_file_path)
+            zip_file.writestr(sound_file_path, buffer.read())   
             
             cur_id_bucket[id] = {'id':id,'duration':duration, 'zip_file': os.path.relpath(current_txt_path, start=dataset_save_path)}
             if os.path.exists(current_zip_path) and os.path.getsize(current_zip_path) > MAX_SIZE_BYTES:
@@ -308,7 +309,7 @@ if __name__ == '__main__':
         "-o", 
         "--output_dir", 
         type=str, 
-        default="Y:/AI/TTS/dataset", 
+        default="Z:/sata11-18612520532/AI/TTS/dataset", 
         help="Path to save the dataset"
     )
     parser.add_argument(
@@ -335,7 +336,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--duration", 
         type=int, 
-        default=30*60*60, 
+        default=60*60*60, 
         help="Dataset Language"
     )
     parser.add_argument(

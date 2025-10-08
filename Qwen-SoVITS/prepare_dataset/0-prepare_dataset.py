@@ -100,9 +100,13 @@ def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProP
         base_name, ext = os.path.splitext(i)
         fn = os.path.basename(base_name)
 
+        dst_txt_path = f"{semantic_folder}/{fn}.txt"
+        if os.path.exists(dst_txt_path):
+            continue
+
         src_txt_file = open(i, 'r', encoding='utf-8')
         src_zip_file = zipfile.ZipFile(f"{hubert_folder}/{fn}.zip", 'r')
-        with open(f"{semantic_folder}/{fn}.txt", 'w', encoding='utf-8') as fw:        
+        with open(dst_txt_path, 'w', encoding='utf-8') as fw:        
             for line in src_txt_file:
                 arr = line.split('\t')
                 if arr[2][-1] == "\n":
@@ -134,14 +138,14 @@ if __name__ == '__main__':
         "-o", 
         "--output_dir", 
         type=str, 
-        default="./logs", 
+        default="Z:/sata11-18612520532/AI/TTS/", 
         help="Path to save the dataset"
     )
     parser.add_argument(
         "-src", 
         "--source_dir", 
         type=str, 
-        default="Y:/AI/TTS/dataset", 
+        default="Z:/sata11-18612520532/AI/TTS/dataset", 
         help="Dataset source"
     )
     parser.add_argument(
