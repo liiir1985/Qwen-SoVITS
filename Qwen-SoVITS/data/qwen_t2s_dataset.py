@@ -9,6 +9,18 @@ import glob
 
 LOCAL_MODEL_PATH = "./pretrained_models/qwen3" 
 
+def add_ending_punctuation_by_lang(text:str, lang:str)->str:
+    if lang == 'ja' or lang =='zh':
+        if text[-1] != "。":
+            return text + "。"
+        else:
+            return text
+    else:
+        if text[-1] != ".":        
+            return text + "."
+        else:
+            return text
+
 class Qwen3Text2SemanticDataset(Dataset):
     """dataset class for text tokens to semantic model training."""
     dataset:list
@@ -30,11 +42,11 @@ class Qwen3Text2SemanticDataset(Dataset):
 
         files = glob.glob(f"{semantic_path}/*.txt")
         f_cnt = 1
-        for i in files:
+        for i in tqdm(files,desc="Loading dataset"):
             with open(i, 'r', encoding='utf-8') as f:
-                for line in tqdm(f, desc=f"Loading dataset({f_cnt}/{len(files)})"):
+                for line in f:
                     arr = line.split("\t")
-                    prompt = f"<|im_start|>user\n语音转文本任务：{{{arr[0]}}}<|im_end|>\n<|im_start|>assistant\n"
+                    prompt = f"<|im_start|>user\n语音转文本任务：{{{add_ending_punctuation_by_lang(arr[0], arr[1])}}}<|im_end|>\n<|im_start|>assistant\n"
                     txt_ids = tokenizer([prompt], return_tensors="pt").to('cpu')
                     txt_ids = txt_ids.data['input_ids'].flatten()
                     buffer = base64.b64decode(arr[2])

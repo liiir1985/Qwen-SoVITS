@@ -68,6 +68,7 @@ def prepare(output_dir, src_dir, dataset, lang, model_dir, sr=32000):
                 dst_txt_file.write(f"{arr[0]}\t{lang}\t{arr[1]}")
             except Exception as ex:
                 print(f"Error while processing {base_name}.flac\n{ex}")
+            audio_buffer.close()
         
         src_txt_file.close()
         src_zip_file.close()

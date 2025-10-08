@@ -3,6 +3,7 @@ import json
 from datasets import load_dataset
 #from feature_extractor import cnhubert
 from torchcodec.encoders import AudioEncoder
+from torchcodec.decoders import AudioDecoder
 import torch
 import numpy as np
 import librosa
@@ -156,6 +157,46 @@ def pack_dataset(dataset_dir, dataset_source:str, lang:str, subset):
     if txt_file is not None:
         txt_file.close()  
     save_ids(database_path, processed_ids)
+
+def repack_genshin(dataset_dir, chara:str):    
+    dataset_save_path = f"{dataset_dir}/{chara}/"
+    base_fn = f"{dataset_save_path}{chara}"
+    zip_cnt = initialize_zip_count(base_fn)
+    zip_cnt+=1
+    zip_file, current_zip_path, current_txt_path = open_new_zip_file(None, None, zip_cnt, base_fn)
+    txt_file = open(current_txt_path ,'a', encoding='utf-8')
+    files = glob.glob(f"{dataset_save_path}*.lab")
+    for i in tqdm(files, desc="Packing dataset"):
+        base_name, ext = os.path.splitext(i)
+        id = os.path.basename(base_name)
+        old_audio_path = f"{dataset_save_path}{id}.wav"
+        if os.path.exists(old_audio_path):
+            decoder = AudioDecoder(old_audio_path)
+
+            with open(i, 'r', encoding='utf-8') as f:
+                txt_file.write(f"{id}\t{f.read().replace("\n", "\\n")}\n")
+            data = decoder.get_all_samples()
+            buffer = io.BytesIO()
+            encoder = AudioEncoder(samples=data.data, sample_rate=data.sample_rate)
+            encoder.to_file_like(buffer, "flac")
+            buffer.seek(0)
+            zip_file.writestr(f"{id}.flac", buffer.read())   
+            buffer.close()
+            del decoder
+            del encoder
+            os.remove(old_audio_path)
+            os.remove(i)
+
+        if os.path.exists(current_zip_path) and os.path.getsize(current_zip_path) > MAX_SIZE_BYTES:
+            zip_cnt+=1
+            zip_file, current_zip_path, current_txt_path = open_new_zip_file(zip_file, current_zip_path, zip_cnt, base_fn)
+            if txt_file is not None:
+                txt_file.close()
+            txt_file = open(current_txt_path ,'w', encoding='utf-8')
+    if zip_file is not None:
+        zip_file.close()
+    if txt_file is not None:
+        txt_file.close()  
 
 def crawl_galgame(subset, cur_id_bucket:dict, lang, dataset_save_path,target_duration, total_secs):
     os.environ['HF_HOME'] = 'E:/hf_cache'
@@ -341,12 +382,14 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--repack',
-        action='store_true',
-        default=False,
+        type=int,
+        default=2,
         help='Repack the dataset to use zip file to store the files'
     )
     args = parser.parse_args()
-    if args.repack:
+    if args.repack == 1:
         pack_dataset(args.output_dir, args.dataset_source, args.lang, args.dataset_subset)
+    elif args.repack == 2:
+        repack_genshin(args.output_dir, args.dataset_subset)
     else:
         crawl_dataset(args.output_dir, args.dataset_source, args.lang, args.duration, args.dataset_subset)
