@@ -15,6 +15,7 @@ import base64
 import zipfile
 import io
 import shutil
+from text.phoneme_utils import get_phones
 
 if torch.cuda.is_available():
     device = "cuda:0"
@@ -115,6 +116,7 @@ def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProP
                 arr = line.split('\t')
                 if arr[2][-1] == "\n":
                     arr[2] = arr[2][:-1]
+                phoneme, txt = get_phones(arr[2], arr[1], "v2", final=True)
                 hubert_file = src_zip_file.open(f"{arr[0]}.pth")
                 ssl_content = torch.load(hubert_file, map_location="cpu")
                 ssl_content = ssl_content.to(device)
@@ -128,7 +130,7 @@ def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProP
                     min_code = cmin
                 i16_codes = codes.cpu().to(torch.int16).numpy()
                 base64_str = base64.b64encode(i16_codes.tobytes()).decode('utf-8')
-                fw.write(f"{arr[2]}\t{arr[1]}\t{base64_str}\n")
+                fw.write(f"{arr[2]}\t{arr[1]}\t{phoneme}\t{base64_str}\n")
 
         src_txt_file.close()
         src_zip_file.close()

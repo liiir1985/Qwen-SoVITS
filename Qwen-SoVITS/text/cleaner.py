@@ -25,7 +25,7 @@ def clean_text(text, language, version=None):
         symbols = symbols_v1.symbols
         language_module_map = {"zh": "chinese", "ja": "japanese", "en": "english"}
     else:
-        symbols = symbols_v2.symbols
+        symbols = symbols_v2.symbols_full
         language_module_map = {"zh": "chinese2", "ja": "japanese", "en": "english", "ko": "korean", "yue": "cantonese"}
 
     if language not in language_module_map:
