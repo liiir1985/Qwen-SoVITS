@@ -80,7 +80,7 @@ class Qwen3Text2SemanticDataset(Dataset):
         input_ids_list = [b["input_ids"] for b in batch]
         input_ids = torch.nn.utils.rnn.pad_sequence(input_ids_list, batch_first=True, padding_value=self.tokenizer.pad_token_id)
         
-        attention_mask = (input_ids != self.tokenizer.pad_token_id).long()
+        attention_mask = torch.zeros(input_ids.shape, dtype=torch.long)
         # Create labels (copy of input_ids)
         labels = input_ids.clone()
         # Mask out prompt part (all tokens up to and including "### Response:\n")
@@ -93,5 +93,6 @@ class Qwen3Text2SemanticDataset(Dataset):
                 random_semantic = 0
             labels[i, :prompt_len + random_semantic] = -100  # ignore prompt tokens in loss
             labels[i, total_len:] = -100
+            attention_mask[i, :total_len] = 1
         return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
 
