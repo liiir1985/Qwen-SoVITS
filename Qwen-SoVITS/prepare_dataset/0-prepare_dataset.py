@@ -42,8 +42,11 @@ def prepare(output_dir, src_dir, dataset, lang, model_dir, sr=32000):
         src_zip_file = zipfile.ZipFile(f"{base_name}.zip", 'r')
         dst_zip_file = zipfile.ZipFile(f"{hubert_folder}/{dataset}_{lang}_{fn}.zip", 'w', zipfile.ZIP_DEFLATED)
         dst_txt_file = open(dst_txt_path, 'w', encoding='utf-8')
+        namelist = src_zip_file.namelist()
         for line in src_txt_file:
             arr = line.split('\t')
+            if f"{arr[0]}.flac" not in namelist:
+                continue
             audio_bytes = src_zip_file.read(f"{arr[0]}.flac")
             audio_buffer = io.BytesIO(audio_bytes)
             hubert_path = f"{arr[0]}.pth"            
@@ -139,14 +142,14 @@ if __name__ == '__main__':
         "-o", 
         "--output_dir", 
         type=str, 
-        default="Z:/sata11-18612520532/AI/TTS/", 
+        default="Y:/AI/TTS/", 
         help="Path to save the dataset"
     )
     parser.add_argument(
         "-src", 
         "--source_dir", 
         type=str, 
-        default="Z:/sata11-18612520532/AI/TTS/dataset", 
+        default="Y:/AI/TTS/dataset", 
         help="Dataset source"
     )
     parser.add_argument(
@@ -159,7 +162,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--dataset", 
         type=str, 
-        default="Galgame", 
+        default="Genshin", 
         help="Dataset Source"
     )
     parser.add_argument(

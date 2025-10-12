@@ -1,11 +1,72 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer,TrainingArguments, Trainer
+from transformers import AutoModelForCausalLM, AutoTokenizer,TrainingArguments, Trainer, AutoConfig
+from transformers.models.qwen3 import Qwen3ForCausalLM
 import torch
+import torch.nn as nn
 from data.qwen_t2s_dataset import Qwen3Text2SemanticDataset
 import argparse
 import os
 import datetime
+from safetensors.torch import load_file
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+class Qwen3Text2SemanticModelForTraining(Qwen3ForCausalLM):
+    def __init__(self, config, phoneme_vocab_size):
+        super().__init__(config)
+        # 假设 Qwen 的 Transformer 模块输出的隐藏维度是 config.hidden_size
+        hidden_size = config.hidden_size 
+        
+        # 1. 音素识别分类头 (Phoneme Recognition Head)
+        self.pr_head = nn.Linear(hidden_size, phoneme_vocab_size)
+        
+        # 2. 预留参数用于PR Loss权重
+        self.pr_loss_weight = 0.2 
+        if config.torch_dtype is not None:
+            # 将模型的 dtype 转换为 config 中指定的类型 (例如 bfloat16)
+            self.to(config.torch_dtype) 
+
+    def forward(self, input_ids=None, labels=None, phoneme_target_ids=None, **kwargs):
+        # 1. 运行原始 Qwen Transformer 模块
+        outputs = super().forward(input_ids=input_ids, labels=labels, **kwargs, output_hidden_states=True)
+        # 提取最后一个Transformer块的隐藏状态 (Hidden States)
+        hidden_states = outputs.hidden_states[-1] 
+
+        # 2. 计算 Semantic Token (主任务) Loss
+        lm_loss = outputs.loss # 原始 CausalLM Loss，即 Semantic Token预测损失
+        
+        # 3. 计算 PR Loss (辅助任务)
+        pr_loss = torch.tensor(0.0, device=lm_loss.device)
+        if phoneme_target_ids is not None:
+            # PR Head进行预测
+            pr_logits = self.pr_head(hidden_states)
+            # 展平以便于交叉熵计算 (忽略填充 ID)
+            pr_loss_fct = nn.CrossEntropyLoss(ignore_index=-100) 
+            pr_loss = pr_loss_fct(
+                pr_logits.view(-1, pr_logits.size(-1)), 
+                phoneme_target_ids.view(-1)
+            )
+
+        # 4. 总损失：主 Loss + 辅助 Loss (加权求和)
+        total_loss = lm_loss + self.pr_loss_weight * pr_loss
+        
+        # 返回总损失和其他必要的输出
+        return {"loss": total_loss, "lm_loss": lm_loss.detach(), "pr_loss": pr_loss.detach()}
     
+    def from_pretrained(model_path):
+        config = AutoConfig.from_pretrained(
+            model_path
+        )
+        state_dict = load_file(os.path.join(model_path, 'model.safetensors'))
+        model = Qwen3Text2SemanticModelForTraining(
+            config=config,  # 传入 Qwen 的基础配置
+            phoneme_vocab_size=250 # 传入您的新参数
+        )
+        missing_keys, unexpected_keys = model.load_state_dict(
+            state_dict, 
+            strict=False 
+        )
+        return model
+
 def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_epoch, max_ckpt, random_mask):
     print(f"Loading model on device: {device}")
 
@@ -16,15 +77,15 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
     )
 
     dataset = Qwen3Text2SemanticDataset("./logs/3-semantic_pairs", tokenizer, random_mask)
+    # split_datasets = dataset.train_test_split(test_size=0.1) 
 
+    # # 训练集
+    # train_dataset = split_datasets['train']
+    # # 验证集
+    # eval_dataset = split_datasets['test'] 
     # 3. 加载 Model (模型权重)
     # 将本地路径作为第一个参数传入 from_pretrained()
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        torch_dtype='auto',
-        device_map="auto", # 自动分配模型到可用的 GPU/CPU
-        trust_remote_code=True 
-    )
+    model = Qwen3Text2SemanticModelForTraining.from_pretrained(model_path)
 
     # 确保模型被加载到正确的设备上（虽然 device_map="auto" 会处理，但这是好习惯）
     model.to(device)
@@ -36,12 +97,17 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=epoch,
+        # === 关键的验证设置 ===
+        #evaluation_strategy="steps",         # 设置在每隔一定步数后进行验证
+        # evaluation_strategy="epoch",       # 或者在每个 epoch 结束时进行验证
+        #eval_steps=30,
         learning_rate=4e-5,  # 适用于全参数微调 (或 LoRA微调可尝试 1e-4)    
         # 【核心调整 2：使用 Cosine 调度器】
         lr_scheduler_type="cosine",    
         # 【核心调整 3：设置 Warmup】
         warmup_ratio=0.05, # 前 5% 的步数用于学习率爬升
         per_device_train_batch_size=batch_size,    # use batch size 2 per GPU
+        per_device_eval_batch_size=batch_size,
         gradient_accumulation_steps=gradient_acc,    # no grad accumulation (since batch 2 is fine)
         logging_steps=10,                 # log every 20 steps
         logging_dir=f'./logs/tensorboard/{run_name}',
@@ -58,6 +124,8 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
     trainer = Trainer(
         model=model,
         train_dataset=dataset,
+        #train_dataset=train_dataset,      # 训练集 (必须)
+        #eval_dataset=eval_dataset, 
         data_collator=dataset.collate,
         args=training_args,
     )
@@ -81,7 +149,16 @@ def modify_base_model(output_dir, model_path):
         device_map="auto",
         trust_remote_code=True 
     )
-
+    config = model.config
+    state_dict = model.state_dict()
+    model = Qwen3Text2SemanticModelForTraining(
+        config=config,  # 传入 Qwen 的基础配置
+        phoneme_vocab_size=250 # 传入您的新参数
+    )
+    missing_keys, unexpected_keys = model.load_state_dict(
+        state_dict, 
+        strict=False 
+    )
     NUM_SEMANTIC_TOKENS = 2048
     semantic_tokens = [f"<t2s_{i}>" for i in range(NUM_SEMANTIC_TOKENS)]   
     special_tokens_dict = {"additional_special_tokens": semantic_tokens} 
@@ -116,7 +193,8 @@ class Qwen3Text2SemanticModel:
         self.model.to(device)
     
     def infer(self, prompt:str, ref_txt:str, ref_semantic:torch.Tensor):
-        text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}、{prompt}}}<|im_end|>\n<|im_start|>assistant\n"
+        text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}。{prompt}}}<|im_end|>\n<|im_start|>assistant\n"
+        #text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}}}<|im_end|>\n<|im_start|>assistant\n"
         ref_semantic = ref_semantic + self.t2s_token_start
         txt_ids = self.tokenizer([text], return_tensors="pt").to('cpu')
         input_ids = txt_ids.data['input_ids']
@@ -129,9 +207,9 @@ class Qwen3Text2SemanticModel:
             attention_mask=attention_mask,
             max_new_tokens=1000,
             max_length=1000,
-            temperature=0.6,
-            top_p=0.5,               # Top-P 采样
-            top_k=10,                # Top-K 采样（安全网）
+            temperature=0.9,
+            top_p=0.8,               # Top-P 采样
+            top_k=20,                # Top-K 采样（安全网）
             do_sample=True,
             eos_token_id=self.tokenizer.eos_token_id
         )
