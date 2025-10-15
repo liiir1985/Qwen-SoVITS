@@ -33,25 +33,33 @@ class Qwen3Text2SemanticDataset(Dataset):
              self,
              semantic_path: str,
              tokenizer,
-             random_mask_semantic=True
+             random_mask_semantic=True,
+             max_tokens_allowed = 1024
     ) -> None:
         super().__init__()
         self.tokenizer = tokenizer
         self.dataset = []
         self.random_mask_semantic = random_mask_semantic
         eos = torch.tensor(tokenizer.eos_token_id, dtype=torch.int64).unsqueeze(0)
+        think_start = torch.tensor(tokenizer.convert_tokens_to_ids("<think>"), dtype=torch.int64).unsqueeze(0)
+        think_end = torch.tensor(tokenizer.convert_tokens_to_ids("</think>"), dtype=torch.int64).unsqueeze(0)
         self.t2s_token_start = tokenizer.convert_tokens_to_ids("<t2s_0>")
-        self.phoneme_tokenizer = Tokenizer.from_file(LOCAL_PHONEME_TOKENIZER)    
+        self.ph_token_start = tokenizer.convert_tokens_to_ids("<ph_0>")
+        self.phoneme_tokenizer = Tokenizer.from_file(LOCAL_PHONEME_TOKENIZER)
 
         files = glob.glob(f"{semantic_path}/*.txt")
         f_cnt = 1
+        max_token_cnt = 0
+        max_line=""
         for i in tqdm(files,desc="Loading dataset"):
             with open(i, 'r', encoding='utf-8') as f:
                 for line in f:
                     arr = line.split("\t")
-                    prompt = f"<|im_start|>user\n语音转文本任务：{{{add_ending_punctuation_by_lang(arr[0], arr[1])}}}<|im_end|>\n<|im_start|>assistant\n"
-                    txt_ids = tokenizer([prompt], return_tensors="pt").to('cpu')
-                    txt_ids = txt_ids.data['input_ids'].flatten()
+                    #prompt = f"<|im_start|>user\n文字转语音任务：{{{arr[0]}}}<|im_end|>\n<|im_start|>assistant\n"
+                    #txt_ids = tokenizer([prompt], return_tensors="pt").to('cpu')
+                    #txt_ids = txt_ids.data['input_ids'].flatten()
+                    ph_ids = torch.tensor(self.phoneme_tokenizer.encode(arr[2].replace("UNK","#")).ids, dtype=torch.long).to('cpu') + self.ph_token_start
+                    txt_ids = torch.cat([think_start, ph_ids, think_end], dim=0)
                     buffer = base64.b64decode(arr[3])
                     semantic_np = np.frombuffer(buffer, dtype=np.int16).copy()
                     semantic_ids = torch.from_numpy(semantic_np).to(torch.int64)
@@ -62,13 +70,19 @@ class Qwen3Text2SemanticDataset(Dataset):
                     #labels = final.clone()
                     # Mask out prompt part (all tokens up to and including "### Response:\n")
                     #labels[0, :txt_ids.shape[0]] = -100
+                    tokenCnt = final.shape[0]
+                    if tokenCnt > max_tokens_allowed:
+                        continue
+                    if tokenCnt > max_token_cnt:
+                        max_token_cnt = tokenCnt
+                        #max_line = f"({line})({i})"
                     self.dataset.append({
                         "input_ids": final, "prompt_len": txt_ids.shape[0], "lang": arr[1]
                     })
             f_cnt+=1
         
 
-        print(f"Dataset loaded with {len(self.dataset)} records")
+        print(f"Dataset loaded with {len(self.dataset)} records, max_tokens:{max_token_cnt}")
 
     def __len__(self) -> int:
         return len(self.dataset)
