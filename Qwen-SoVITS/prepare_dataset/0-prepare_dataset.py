@@ -116,7 +116,7 @@ def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProP
                 arr = line.split('\t')
                 if arr[2][-1] == "\n":
                     arr[2] = arr[2][:-1]
-                phoneme, txt = get_phones(arr[2], arr[1], "v2", final=True)
+                phoneme, txt = get_phones(arr[2], f"all_{arr[1]}", "v2", final=True)
                 hubert_file = src_zip_file.open(f"{arr[0]}.pth")
                 ssl_content = torch.load(hubert_file, map_location="cpu")
                 ssl_content = ssl_content.to(device)
@@ -135,6 +135,91 @@ def process_semantic(output_dir, pretrained_s2G = "./pretrained_models/s2Gv2ProP
         src_txt_file.close()
         src_zip_file.close()
     print(f"min code: {min_code}, max code:{max_code}")
+
+def combined_process(output_dir, src_dir, dataset, lang, model_dir, sr=32000, pretrained_s2G = "./pretrained_models/s2Gv2ProPlus.pth"):
+    cnhubert.cnhubert_base_path = model_dir
+    model = cnhubert.get_model()
+    model = model.to(device)
+    hps = utils.get_hparams_from_file("./configs/s2v2ProPlus.json")
+    vq_model = SynthesizerTrn(
+        hps.data.filter_length // 2 + 1,
+        hps.train.segment_size // hps.data.hop_length,
+        n_speakers=hps.data.n_speakers,
+        version="v2ProPlus",
+        **hps.model,
+    )
+    vq_model = vq_model.to(device)
+    vq_model.eval()
+    print(
+        vq_model.load_state_dict(
+            torch.load(pretrained_s2G, map_location="cpu", weights_only=False)["weight"], strict=False
+        )
+    )
+    txt_folder = f"{output_dir}/1-txts"
+    os.makedirs(txt_folder, exist_ok=True)
+    hubert_folder = f"{output_dir}/2-huberts"
+    os.makedirs(hubert_folder, exist_ok=True)
+    semantic_folder = f"{output_dir}/3-semantic_pairs"
+    os.makedirs(semantic_folder, exist_ok=True)
+    files = glob.glob(f"{src_dir}/{dataset}/{lang}/*.txt")
+
+    for i in tqdm(files, desc="Processing audios"):
+        base_name, ext = os.path.splitext(i)
+        fn = os.path.basename(base_name)
+
+        dst_txt_path = f"{semantic_folder}/{dataset}_{lang}_{fn}.txt"
+        if os.path.exists(dst_txt_path):
+            continue
+        src_txt_file = open(i, 'r', encoding='utf-8')
+        src_zip_file = zipfile.ZipFile(f"{base_name}.zip", 'r')
+        dst_txt_file = open(dst_txt_path, 'w', encoding='utf-8')
+        namelist = src_zip_file.namelist()
+        for line in src_txt_file:
+            arr = line.split('\t')
+            if f"{arr[0]}.flac" not in namelist:
+                continue
+            audio_bytes = src_zip_file.read(f"{arr[0]}.flac")
+            audio_buffer = io.BytesIO(audio_bytes)
+            
+            try:
+                final_data = load_audio(audio_buffer, sr)
+                tmp_max = np.abs(final_data).max()
+                if tmp_max > 2.2:
+                    print("%s-filtered,%s" % (i, tmp_max))
+                    continue
+                ssl = get_audio_hubert(model, final_data, sr)
+                if np.isnan(ssl.detach().numpy()).sum() != 0:
+                    print("nan filtered:%s" % i)
+                    continue
+                if arr[1][-1] == "\n":
+                    arr[1] = arr[1][:-1]
+                ssl_content = ssl.to(device)
+                codes = vq_model.extract_latent(ssl_content)
+                i16_codes = codes.cpu().to(torch.int16).numpy()
+                base64_str = base64.b64encode(i16_codes.tobytes()).decode('utf-8')
+                phoneme, txt = get_phones(arr[1], f"all_{lang}", "v2", final=True)
+                dst_txt_file.write(f"{arr[1]}\t{lang}\t{phoneme}\t{base64_str}\n")
+            except Exception as ex:
+                print(f"Error while processing {base_name}.flac\n{ex}")
+            audio_buffer.close()
+        
+        src_txt_file.close()
+        src_zip_file.close()
+        dst_txt_file.close()
+
+def regen_phonme(output_dir):
+    semantic_folder = f"{output_dir}/3-semantic_pairs"
+    files = glob.glob(f"{semantic_folder}/*.txt")
+    for i in tqdm(files, desc="Processing audios"):
+        src_txt_file = open(i, 'r', encoding='utf-8')
+        res = []
+        for line in src_txt_file:
+            arr = line.split('\t')
+            phoneme, txt = get_phones(arr[0], f"all_{arr[1]}", "v2", final=True)
+            res.append(f"{arr[0]}\t{arr[1]}\t{phoneme}\t{arr[3]}")
+        src_txt_file.close()
+        with open(i, 'w', encoding='utf-8') as fw:
+            fw.writelines(res)        
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -164,14 +249,14 @@ if __name__ == '__main__':
     parser.add_argument(
         "--dataset", 
         type=str, 
-        default="Genshin", 
+        default="Emilia", 
         help="Dataset Source"
     )
     parser.add_argument(
         "-s", 
         "--step", 
         type=int, 
-        default=1, 
+        default=2, 
         help="Process step"
     )
     parser.add_argument(
@@ -186,3 +271,7 @@ if __name__ == '__main__':
         prepare(args.output_dir, args.source_dir, args.dataset, args.lang, args.pretrained_model)
     elif args.step == 1:
         process_semantic(args.output_dir)
+    elif args.step == 2:
+        combined_process(args.output_dir, args.source_dir, args.dataset, args.lang, args.pretrained_model)
+    elif args.step == 3:
+        regen_phonme(args.output_dir)
