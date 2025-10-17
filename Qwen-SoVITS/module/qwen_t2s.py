@@ -1,4 +1,5 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer,TrainingArguments, Trainer, AutoConfig
+from tokenizers import Tokenizer
 from transformers.models.qwen3 import Qwen3ForCausalLM
 import torch
 import torch.nn as nn
@@ -7,6 +8,7 @@ import argparse
 import os
 import datetime
 from safetensors.torch import load_file
+from text.phoneme_utils import get_phones
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -171,6 +173,7 @@ def modify_base_model(output_dir, model_path):
     tokenizer.save_pretrained(output_dir)
     model.save_pretrained(output_dir)
 
+LOCAL_PHONEME_TOKENIZER= "./pretrained_models/phoneme_tokenizer/phoneme_tokenizer.json"
 class Qwen3Text2SemanticModel:
     tokenizer:any
     model:AutoModelForCausalLM
@@ -190,15 +193,25 @@ class Qwen3Text2SemanticModel:
             trust_remote_code=True 
         )
         self.t2s_token_start = self.tokenizer.convert_tokens_to_ids("<t2s_0>")
+        self.think_start = torch.tensor(self.tokenizer.convert_tokens_to_ids("<think>"), dtype=torch.int64).unsqueeze(0)
+        self.think_end = torch.tensor(self.tokenizer.convert_tokens_to_ids("</think>"), dtype=torch.int64).unsqueeze(0)
+        self.ph_token_start = self.tokenizer.convert_tokens_to_ids("<ph_0>")
+        self.phoneme_tokenizer = Tokenizer.from_file(LOCAL_PHONEME_TOKENIZER)
         self.model.to(device)
     
     def infer(self, prompt:str, ref_txt:str, ref_semantic:torch.Tensor):
         text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}。{prompt}}}<|im_end|>\n<|im_start|>assistant\n"
         #text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}}}<|im_end|>\n<|im_start|>assistant\n"
-        ref_semantic = ref_semantic + self.t2s_token_start
-        txt_ids = self.tokenizer([text], return_tensors="pt").to('cpu')
-        input_ids = txt_ids.data['input_ids']
-        attention_mask = txt_ids.data['attention_mask']
+        # txt_ids = self.tokenizer([text], return_tensors="pt").to('cpu')
+        # input_ids = txt_ids.data['input_ids']
+
+        ph, norm_text = get_phones(f"{ref_txt}。{prompt}", "all_ja", "v2", final=True)
+        print(f"音素结果：{ph}")
+        ph_ids = torch.tensor(self.phoneme_tokenizer.encode(ph).ids, dtype=torch.long).to('cpu') + self.ph_token_start
+        input_ids = torch.cat([self.think_start, ph_ids, self.think_end], dim=0).unsqueeze(0)
+        
+        attention_mask = torch.ones(input_ids.shape, dtype=torch.long)
+        ref_semantic = ref_semantic + self.t2s_token_start        
         attention_mask_ref = (ref_semantic != self.tokenizer.pad_token_id).long()
         input_ids = torch.cat([input_ids,ref_semantic], dim=1).to(device)
         attention_mask = torch.cat([attention_mask, attention_mask_ref], dim=1).to(device)
@@ -208,7 +221,7 @@ class Qwen3Text2SemanticModel:
             max_new_tokens=1000,
             max_length=1000,
             temperature=0.9,
-            top_p=0.8,               # Top-P 采样
+            top_p=0.95,               # Top-P 采样
             top_k=20,                # Top-K 采样（安全网）
             do_sample=True,
             eos_token_id=self.tokenizer.eos_token_id
@@ -218,7 +231,7 @@ class Qwen3Text2SemanticModel:
         if result[-1] == self.tokenizer.eos_token_id:
             result = result[:-1]
 
-        response = self.tokenizer.decode(result, skip_special_tokens=True)
+        response = self.tokenizer.decode(result, skip_special_tokens=False)
         print("\n--- Model Response ---")
         print(response)
         result = result - self.t2s_token_start
