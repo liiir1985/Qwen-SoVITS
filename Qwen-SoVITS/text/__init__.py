@@ -23,6 +23,6 @@ def cleaned_text_to_sequence(cleaned_text, version=None):
     if version == "v1":
         phones = [_symbol_to_id_v1[symbol] for symbol in cleaned_text]
     else:
-        phones = [_symbol_to_id_v2.get(symbol, "UNK") for symbol in cleaned_text]
+        phones = [_symbol_to_id_v2.get(symbol, _symbol_to_id_v2["UNK"]) for symbol in cleaned_text]
 
     return phones
