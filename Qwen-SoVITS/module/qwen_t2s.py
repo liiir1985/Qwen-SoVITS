@@ -5,10 +5,12 @@ import torch
 import torch.nn as nn
 from data.qwen_t2s_dataset import Qwen3Text2SemanticDataset
 import argparse
+from tqdm import tqdm
 import os
 import datetime
 from safetensors.torch import load_file
 from text.phoneme_utils import get_phones
+from transformers.generation import TextStreamer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -173,6 +175,23 @@ def modify_base_model(output_dir, model_path):
     tokenizer.save_pretrained(output_dir)
     model.save_pretrained(output_dir)
 
+class SemanticTokenStreamer(TextStreamer):
+    
+    def __init__(self, max_token=1024):
+        self.token_list = None
+        self.tqdm = tqdm(total=max_token, desc="Generating Semantic tokens", unit="token")
+
+    def put(self, input_ids):
+        self.tqdm.update(1)
+        if self.token_list is None:
+            self.token_list = input_ids
+        else:
+            self.token_list = torch.cat([self.token_list, input_ids.unsqueeze(0)], dim =1)
+        
+    def end(self):
+        self.tqdm.close()
+        print("[Generation Complete]\n")
+
 LOCAL_PHONEME_TOKENIZER= "./pretrained_models/phoneme_tokenizer/phoneme_tokenizer.json"
 class Qwen3Text2SemanticModel:
     tokenizer:any
@@ -199,11 +218,11 @@ class Qwen3Text2SemanticModel:
         self.phoneme_tokenizer = Tokenizer.from_file(LOCAL_PHONEME_TOKENIZER)
         self.model.to(device)
     
-    def infer(self, prompt:str, ref_txt:str, ref_semantic:torch.Tensor):
-        text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}。{prompt}}}<|im_end|>\n<|im_start|>assistant\n"
+    def infer(self, prompt:str, ref_txt:str, ref_semantic:torch.Tensor, max_tokens = 1024):
+        text = f"<|im_start|>user\n文字转语音任务：{{{ref_txt}。{prompt}}}<|im_end|>\n<|im_start|>assistant\n"
         #text = f"<|im_start|>user\n语音转文本任务：{{{ref_txt}}}<|im_end|>\n<|im_start|>assistant\n"
-        # txt_ids = self.tokenizer([text], return_tensors="pt").to('cpu')
-        # input_ids = txt_ids.data['input_ids']
+        txt_ids = self.tokenizer([text], return_tensors="pt").to('cpu')
+        txt_ids = txt_ids.data['input_ids'].squeeze(0)
 
         ph, norm_text = get_phones(f"{ref_txt}。{prompt}", "all_ja", "v2", final=True)
         print(f"音素结果：{ph}")
@@ -218,13 +237,14 @@ class Qwen3Text2SemanticModel:
         generated_ids = self.model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            max_new_tokens=1000,
-            max_length=1000,
+            max_new_tokens=max_tokens,
+            max_length=max_tokens,
             temperature=0.9,
             top_p=0.95,               # Top-P 采样
             top_k=20,                # Top-K 采样（安全网）
             do_sample=True,
-            eos_token_id=self.tokenizer.eos_token_id
+            eos_token_id=self.tokenizer.eos_token_id,
+            streamer = SemanticTokenStreamer(max_tokens)
         )
 
         result = generated_ids[0][input_ids.shape[1]:]
