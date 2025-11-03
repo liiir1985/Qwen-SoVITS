@@ -34,11 +34,17 @@ class Qwen3Text2SemanticDataset(Dataset):
         self.t2s_token_start = tokenizer.convert_tokens_to_ids("<t2s_0>")
         self.ph_token_start = tokenizer.convert_tokens_to_ids("<ph_0>")
         self.phoneme_tokenizer = Tokenizer.from_file(LOCAL_PHONEME_TOKENIZER)
+        self.lang_tokens = {
+            "en" : torch.tensor(tokenizer.convert_tokens_to_ids("<lang_en>"), dtype=torch.int64).unsqueeze(0),
+            "zh" : torch.tensor(tokenizer.convert_tokens_to_ids("<lang_zh>"), dtype=torch.int64).unsqueeze(0),
+            "ja" : torch.tensor(tokenizer.convert_tokens_to_ids("<lang_ja>"), dtype=torch.int64).unsqueeze(0),        
+        }
 
         files = glob.glob(f"{semantic_path}/*.txt")
         f_cnt = 1
         max_token_cnt = 0
         max_line=""
+        skip_cnt = 0
         for i in tqdm(files,desc="Loading dataset"):
             with open(i, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -47,11 +53,17 @@ class Qwen3Text2SemanticDataset(Dataset):
                     input_ids = tokenizer([prompt], return_tensors="pt").to('cpu')
                     input_ids = input_ids.data['input_ids'].flatten()
                     ph_ids = torch.tensor(self.phoneme_tokenizer.encode(arr[2]).ids, dtype=torch.long).to('cpu') + self.ph_token_start
-                    txt_ids = torch.cat([think_start, ph_ids, think_end], dim=0)
-                    txt_ids_full = torch.cat([input_ids, think_start, ph_ids, think_end], dim=0)
+                    lang_token = self.lang_tokens.get(arr[1])
+                    txt_ids = torch.cat([think_start, lang_token, ph_ids, think_end], dim=0)
+                    txt_ids_full = torch.cat([input_ids, think_start, lang_token, ph_ids, think_end], dim=0)
 
-                    #prompt_str = self.tokenizer.decode(txt_ids_full, skip_special_tokens=False)
-                    #print(prompt_str)
+                    prompt_phoneme = f'{{ "text": "{arr[0]}",\n"phoneme" : "{self.tokenizer.decode(ph_ids, skip_special_tokens=False)}"}}'
+                    input_ids_ph = tokenizer([prompt_phoneme], return_tensors="pt").to('cpu')
+                    input_ids_ph = input_ids_ph.data['input_ids'].flatten()
+
+                    # prompt_str = self.tokenizer.decode(txt_ids_full, skip_special_tokens=False)
+                    # print(prompt_str)
+                    # print(breakbreak)
                     
                     buffer = base64.b64decode(arr[3])
                     semantic_np = np.frombuffer(buffer, dtype=np.int16).copy()
@@ -66,17 +78,23 @@ class Qwen3Text2SemanticDataset(Dataset):
                     #labels[0, :txt_ids.shape[0]] = -100
                     tokenCnt = final.shape[0]
                     if tokenCnt > max_tokens_allowed:
+                        skip_cnt +=1
                         continue
                     if tokenCnt > max_token_cnt:
                         max_token_cnt = tokenCnt
                         #max_line = f"({line})({i})"
                     self.dataset.append({
-                        "input_ids": final, "input_ids_full":final_full, "prompt_len": txt_ids.shape[0], "prompt_len_full": txt_ids_full.shape[0], "lang": arr[1]
+                        "input_ids": final,
+                        "input_ids_full":final_full, 
+                        "input_ids_ph":input_ids_ph,
+                        "prompt_len": txt_ids.shape[0], 
+                        "prompt_len_full": txt_ids_full.shape[0], 
+                        "lang": arr[1]
                     })
             f_cnt+=1
         
 
-        print(f"Dataset loaded with {len(self.dataset)} records, max_tokens:{max_token_cnt}")
+        print(f"Dataset loaded with {len(self.dataset)} records, max_tokens:{max_token_cnt}, skip_cnt:{skip_cnt}")
 
     def __len__(self) -> int:
         return len(self.dataset)
@@ -85,18 +103,19 @@ class Qwen3Text2SemanticDataset(Dataset):
         return self.dataset[idx]
     
     def collate(self, batch: list[dict]) -> dict:
-        should_sft = random.randrange(100) < 10
-        should_phoneme_sft = not should_sft and random.randrange(100) < 30
+        should_sft = random.randrange(100) < 5
+        should_phoneme_sft = not should_sft and random.randrange(100) < 95
         if (not should_sft) and (not should_phoneme_sft):
-            rn = random.randrange(3)
-            if rn == 0:
-                input_ids_list = [b["input_ids"][1:b["prompt_len"]-1] for b in batch]
-            elif rn == 1:
-                input_ids_list = [b["input_ids"][b["prompt_len"]:] for b in batch]
+            rn = random.randrange(100)
+            if rn < 10:
+                input_ids_list = [b["input_ids_ph"] for b in batch]
+            elif rn < 30:
+                input_ids_list = [b["input_ids"][b["prompt_len"]:] for b in batch]                
             else:
-                input_ids_list = [b["input_ids"] for b in batch]
+                input_ids_list = [b["input_ids"][1:b["prompt_len"]-1] for b in batch]
         else:
             input_ids_list = [b["input_ids_full"] if should_sft else b["input_ids"] for b in batch]
+        print(self.tokenizer.decode(input_ids_list[0],skip_special_tokens=False))
         input_ids = torch.nn.utils.rnn.pad_sequence(input_ids_list, batch_first=True, padding_value=self.tokenizer.pad_token_id)
         
         attention_mask = torch.zeros(input_ids.shape, dtype=torch.long)
@@ -104,9 +123,9 @@ class Qwen3Text2SemanticDataset(Dataset):
         labels = input_ids.clone()
         # Mask out prompt part (all tokens up to and including "### Response:\n")
         for i, b in enumerate(batch):
-            prompt_len = b["prompt_len_full"] if should_sft else b["prompt_len"] # length of prompt in tokens
             total_len = input_ids_list[i].shape[0]           
             if should_sft or should_phoneme_sft:
+                prompt_len = b["prompt_len_full"] if should_sft else b["prompt_len"] # length of prompt in tokens            
                 if self.random_mask_semantic and random.randrange(100) < 50:
                     random_semantic = random.randrange(int((input_ids_list[i].shape[0] - prompt_len) / 1.5))
                 else:
