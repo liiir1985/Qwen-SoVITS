@@ -215,6 +215,9 @@ class Qwen3Text2SemanticModel:
         self.think_start = torch.tensor(self.tokenizer.convert_tokens_to_ids("<think>"), dtype=torch.int64).unsqueeze(0)
         self.think_end = torch.tensor(self.tokenizer.convert_tokens_to_ids("</think>"), dtype=torch.int64).unsqueeze(0)
         self.ph_token_start = self.tokenizer.convert_tokens_to_ids("<ph_0>")
+        self.lang_tokens = {
+            "ja": torch.tensor(self.tokenizer.convert_tokens_to_ids("<lang_ja>"), dtype=torch.int64).unsqueeze(0)
+        }
         self.phoneme_tokenizer = Tokenizer.from_file(LOCAL_PHONEME_TOKENIZER)
         self.model.to(device)
     
@@ -227,12 +230,13 @@ class Qwen3Text2SemanticModel:
         ph, norm_text = get_phones(f"{ref_txt}。{prompt}", "all_ja", "v2", final=True)
         print(f"音素结果：{ph}")
         ph_ids = torch.tensor(self.phoneme_tokenizer.encode(ph).ids, dtype=torch.long).to('cpu') + self.ph_token_start
-        input_ids = torch.cat([self.think_start, ph_ids, self.think_end], dim=0).unsqueeze(0)
+        input_ids = torch.cat([self.think_start,self.lang_tokens["ja"], ph_ids, self.think_end], dim=0).unsqueeze(0)
         
         attention_mask = torch.ones(input_ids.shape, dtype=torch.long)
         ref_semantic = ref_semantic + self.t2s_token_start        
         attention_mask_ref = (ref_semantic != self.tokenizer.pad_token_id).long()
         input_ids = torch.cat([input_ids,ref_semantic], dim=1).to(device)
+        #print(self.tokenizer.decode(input_ids[0], skip_special_tokens=False))
         attention_mask = torch.cat([attention_mask, attention_mask_ref], dim=1).to(device)
         generated_ids = self.model.generate(
             input_ids=input_ids,
@@ -241,7 +245,7 @@ class Qwen3Text2SemanticModel:
             max_length=max_tokens,
             temperature=0.9,
             top_p=0.95,               # Top-P 采样
-            top_k=20,                # Top-K 采样（安全网）
+            top_k=40,                # Top-K 采样（安全网）
             do_sample=True,
             eos_token_id=self.tokenizer.eos_token_id,
             streamer = SemanticTokenStreamer(max_tokens)
@@ -250,6 +254,9 @@ class Qwen3Text2SemanticModel:
         result = generated_ids[0][input_ids.shape[1]:]
         if result[-1] == self.tokenizer.eos_token_id:
             result = result[:-1]
+        
+        if result.shape[0] < 25:
+            result = torch.full((25,), self.t2s_token_start + 180, dtype=torch.int64).to(device)
 
         response = self.tokenizer.decode(result, skip_special_tokens=False)
         print("\n--- Model Response ---")

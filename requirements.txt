@@ -1,8 +1,9 @@
-torch==2.8.0+cu128
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.8.0+cu128 
 torchaudio
 torchvision
-scipy
-datasets
+scipy~=1.16.2
+datasets~=4.2.0
 torchcodec~=0.7.0
 transformers~=4.51
 librosa~=0.10.2
