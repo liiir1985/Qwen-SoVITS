@@ -384,7 +384,7 @@ class SovitsSemantic2AudioModel:
         prompt_language,
         text,
         text_language,
-        how_to_cut=i18n("不切"),
+        how_to_cut=i18n("凑四句一切"),
         top_k=20,
         top_p=0.6,
         temperature=0.6,
@@ -473,7 +473,7 @@ class SovitsSemantic2AudioModel:
             if i_text in self.cache and if_freeze == True:
                 pred_semantic = self.cache[i_text]
             else:
-                pred_semantic = self.t2s_model.infer(text, prompt_text, prompt).unsqueeze(0).unsqueeze(0)
+                pred_semantic = self.t2s_model.infer(text, text_language, prompt_text, prompt_language, prompt).unsqueeze(0).unsqueeze(0)
                 self.cache[i_text] = pred_semantic
                 
             t3 = ttime()

@@ -380,9 +380,11 @@ def crawl_emilia(dataset_source, cur_id_bucket:dict, lang, dataset_save_path,tar
 
             sound_file_path = f"{id}.flac"
             decoder = sample['mp3']
-            data = decoder.get_all_samples()
-
-            encoder = AudioEncoder(samples=data.data, sample_rate=data.sample_rate)
+            if isinstance(decoder,dict):
+                encoder = AudioEncoder(samples=torch.from_numpy(decoder["array"]).to(torch.float32), sample_rate=decoder["sampling_rate"])
+            else:
+                data = decoder.get_all_samples()
+                encoder = AudioEncoder(samples=data.data, sample_rate=data.sample_rate)
             encoder.to_file_like(buffer, "flac")
             buffer.seek(0)
             txt_file.write(f"{id}\t{text.replace("\n", "\\n")}\n")
@@ -462,13 +464,13 @@ if __name__ == '__main__':
         "-l", 
         "--lang", 
         type=str, 
-        default="ja", 
+        default="zh", 
         help="Dataset Language"
     )
     parser.add_argument(
         "--duration", 
         type=int, 
-        default=100*60*60, 
+        default=200*60*60, 
         help="Dataset Language"
     )
     parser.add_argument(

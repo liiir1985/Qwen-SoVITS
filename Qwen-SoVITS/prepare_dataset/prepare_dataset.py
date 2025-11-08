@@ -201,7 +201,7 @@ def combined_process(output_dir, src_dir, dataset, lang, model_dir, sr=32000, pr
                 dst_txt_file.write(f"{arr[1]}\t{lang}\t{phoneme}\t{base64_str}\n")
             except Exception as ex:
                 print(f"Error while processing {base_name}.flac\n{ex}")
-            audio_buffer.close()
+            audio_buffer.close()            
         
         src_txt_file.close()
         src_zip_file.close()
@@ -243,13 +243,13 @@ if __name__ == '__main__':
         "-l", 
         "--lang", 
         type=str, 
-        default="ja", 
+        default="zh", 
         help="Dataset Language"
     )
     parser.add_argument(
         "--dataset", 
         type=str, 
-        default="Emilia", 
+        default="Genshin", 
         help="Dataset Source"
     )
     parser.add_argument(

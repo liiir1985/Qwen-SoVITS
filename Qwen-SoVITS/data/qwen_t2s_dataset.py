@@ -22,7 +22,8 @@ class Qwen3Text2SemanticDataset(Dataset):
              semantic_path: str,
              tokenizer,
              random_mask_semantic=True,
-             max_tokens_allowed = 1024
+             max_tokens_allowed = 1024,
+             min_tokens_allowed = 0
     ) -> None:
         super().__init__()
         self.tokenizer = tokenizer
@@ -80,6 +81,9 @@ class Qwen3Text2SemanticDataset(Dataset):
                     if tokenCnt > max_tokens_allowed:
                         skip_cnt +=1
                         continue
+                    if tokenCnt < min_tokens_allowed:
+                        skip_cnt +=1
+                        continue
                     if tokenCnt > max_token_cnt:
                         max_token_cnt = tokenCnt
                         #max_line = f"({line})({i})"
@@ -126,8 +130,9 @@ class Qwen3Text2SemanticDataset(Dataset):
             total_len = input_ids_list[i].shape[0]           
             if should_sft or should_phoneme_sft:
                 prompt_len = b["prompt_len_full"] if should_sft else b["prompt_len"] # length of prompt in tokens            
-                if self.random_mask_semantic and random.randrange(100) < 50:
-                    random_semantic = random.randrange(int((input_ids_list[i].shape[0] - prompt_len) / 1.5))
+                if self.random_mask_semantic and random.randrange(100) < 70:
+                    max_val = input_ids_list[i].shape[0] - prompt_len - 10
+                    random_semantic = min(random.randrange(int((input_ids_list[i].shape[0] - prompt_len) / 1.0)), max_val)
                 else:
                     random_semantic = 0
                 labels[i, :prompt_len + random_semantic] = -100  # ignore prompt tokens in loss
