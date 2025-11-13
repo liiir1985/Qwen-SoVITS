@@ -87,9 +87,14 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
     # train_dataset = split_datasets['train']
     # # 验证集
     # eval_dataset = split_datasets['test'] 
-    # 3. 加载 Model (模型权重)
+        # 3. 加载 Model (模型权重)
     # 将本地路径作为第一个参数传入 from_pretrained()
-    model = Qwen3Text2SemanticModelForTraining.from_pretrained(model_path)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        torch_dtype='auto',
+        device_map="auto", # 自动分配模型到可用的 GPU/CPU
+        trust_remote_code=True 
+    )
 
     # 确保模型被加载到正确的设备上（虽然 device_map="auto" 会处理，但这是好习惯）
     model.to(device)
@@ -175,6 +180,19 @@ def modify_base_model(output_dir, model_path):
     tokenizer.save_pretrained(output_dir)
     model.save_pretrained(output_dir)
 
+def AWQQuantize(output_dir, model_path):
+    from transformers import activations
+    activations.PytorchGELUTanh = activations.GELUTanh
+    from awq import AutoAWQForCausalLM
+    from data.qwen_awq_evalset import Qwen3AWQEvalDataset
+    quant_config = { "zero_point": True, "q_group_size": 128, "w_bit": 4, "version": "GEMM" }
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    dataset = Qwen3AWQEvalDataset("./logs/4-quantize_pair", tokenizer)
+    model = AutoAWQForCausalLM.from_pretrained(model_path, device_map="auto", safetensors=True)
+    model.quantize(tokenizer, quant_config=quant_config, calib_data=dataset.dataset)
+    model.save_quantized(output_dir, safetensors=True, shard_size="4GB")
+    tokenizer.save_pretrained(output_dir)
+
 class SemanticTokenStreamer(TextStreamer):
     
     def __init__(self, max_token=1024):
@@ -199,7 +217,8 @@ class Qwen3Text2SemanticModel:
     t2s_token_start:any
     def __init__(self, model_path):
         print(f"Loading model on device: {device}")
-
+        from transformers import activations
+        activations.PytorchGELUTanh = activations.GELUTanh
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
             trust_remote_code=True
@@ -243,27 +262,28 @@ class Qwen3Text2SemanticModel:
         input_ids = torch.cat([input_ids,ref_semantic], dim=1).to(device)
         #print(self.tokenizer.decode(input_ids[0], skip_special_tokens=False))
         attention_mask = torch.cat([attention_mask, attention_mask_ref], dim=1).to(device)
-        retry_cnt = 0
+        prompt_len = input_ids.shape[1]
         while True:
             generated_ids = self.model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 max_new_tokens=max_tokens,
                 max_length=max_tokens,
-                temperature=0.9,
+                temperature=1.2,
                 top_p=0.95,               # Top-P 采样
-                top_k=20,                # Top-K 采样（安全网）
+                top_k=40,                # Top-K 采样（安全网）
                 do_sample=True,
                 eos_token_id=self.tokenizer.eos_token_id,
                 streamer = SemanticTokenStreamer(max_tokens)
             )
-            result = generated_ids[0][input_ids.shape[1]:]
+            result = generated_ids[0][prompt_len:]
             if result[-1] == self.tokenizer.eos_token_id:
                 result = result[:-1]
         
-            if retry_cnt > 5 or result.shape[0] >0:
+            if result.shape[0] >= 10:
                 break
-            retry_cnt += 1
+            input_ids = torch.cat([input_ids,torch.full([1,1], self.t2s_token_start + 280).to(device)], dim=1)
+            attention_mask = torch.cat([attention_mask, torch.ones([1,1]).to(device)], dim=1)
 
         if result.shape[0] == 0:
             result = torch.full([10], self.t2s_token_start + 280).to(device)
@@ -282,7 +302,7 @@ if __name__ == '__main__':
         "-o", 
         "--output_dir", 
         type=str, 
-        default="./logs/s1", 
+        default="./logs/awq", 
         help="Path to save the checkpoint"
     )
     parser.add_argument(
@@ -333,6 +353,13 @@ if __name__ == '__main__':
         help='Modify the base model to adapt the semantic tokens'
     )
     parser.add_argument(
+        "-awq", 
+        '--awq',
+        action='store_true',
+        default=True,
+        help='Make the AWQ 4bit version of the model'
+    )
+    parser.add_argument(
         '--random_mask',
         action='store_true',
         default=False,
@@ -341,6 +368,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.modify_base_model:
         modify_base_model(args.output_dir, args.pretrained_model)
+    elif args.awq:
+        AWQQuantize(args.output_dir, args.pretrained_model)
     else:
         start_train(args.output_dir, args.pretrained_model, args.batch_size, args.gradient_acc, args.epoch,args.save_epoch,args.max_ckpt, args.random_mask)
 # --- 4. 运行推理测试 ---
