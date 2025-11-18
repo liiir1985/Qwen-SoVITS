@@ -110,7 +110,7 @@ def start_train(output_dir, model_path, batch_size, gradient_acc, epoch, save_ep
         #evaluation_strategy="steps",         # 设置在每隔一定步数后进行验证
         # evaluation_strategy="epoch",       # 或者在每个 epoch 结束时进行验证
         #eval_steps=30,
-        learning_rate=4e-5,  # 适用于全参数微调 (或 LoRA微调可尝试 1e-4)    
+        learning_rate=4e-4,  # 适用于全参数微调 (或 LoRA微调可尝试 1e-4)    
         # 【核心调整 2：使用 Cosine 调度器】
         lr_scheduler_type="cosine",    
         # 【核心调整 3：设置 Warmup】
@@ -158,18 +158,12 @@ def modify_base_model(output_dir, model_path):
         device_map="auto",
         trust_remote_code=True 
     )
-    config = model.config
-    state_dict = model.state_dict()
-    model = Qwen3Text2SemanticModelForTraining(
-        config=config,  # 传入 Qwen 的基础配置
-        phoneme_vocab_size=250 # 传入您的新参数
-    )
-    missing_keys, unexpected_keys = model.load_state_dict(
-        state_dict, 
-        strict=False 
-    )
-    NUM_SEMANTIC_TOKENS = 2048
-    semantic_tokens = [f"<t2s_{i}>" for i in range(NUM_SEMANTIC_TOKENS)]   
+
+    NUM_SEMANTIC_TOKENS = 1024
+    NUM_PHONEME_TOKENS = 735
+    semantic_tokens = [f"<t2s_{i}>" for i in range(NUM_SEMANTIC_TOKENS)]
+    semantic_tokens = semantic_tokens + [f"<ph_{i}>" for i in range(NUM_PHONEME_TOKENS)]
+    semantic_tokens = semantic_tokens + ["<lang_zh>", "<lang_ja>","<lang_en>"]
     special_tokens_dict = {"additional_special_tokens": semantic_tokens} 
     tokenizer.add_special_tokens(special_tokens_dict)
     new_vocab_size = len(tokenizer)
@@ -181,17 +175,23 @@ def modify_base_model(output_dir, model_path):
     model.save_pretrained(output_dir)
 
 def AWQQuantize(output_dir, model_path):
-    from transformers import activations
-    activations.PytorchGELUTanh = activations.GELUTanh
-    from awq import AutoAWQForCausalLM
+    # from llmcompressor.modifiers.awq import AWQModifier
+    from llmcompressor.modifiers.quantization import GPTQModifier
+    from llmcompressor.modifiers.smoothquant import SmoothQuantModifier 
+    from llmcompressor import oneshot
     from data.qwen_awq_evalset import Qwen3AWQEvalDataset
-    quant_config = { "zero_point": True, "q_group_size": 128, "w_bit": 4, "version": "GEMM" }
+    # recipe = [
+    #     AWQModifier(ignore=["lm_head"], scheme="W4A16_ASYM", targets=["Linear"]),
+    # ]
+    recipe = [
+        SmoothQuantModifier(smoothing_strength=0.8),
+        GPTQModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"]),
+    ]
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     dataset = Qwen3AWQEvalDataset("./logs/4-quantize_pair", tokenizer)
-    model = AutoAWQForCausalLM.from_pretrained(model_path, device_map="auto", safetensors=True)
-    model.quantize(tokenizer, quant_config=quant_config, calib_data=dataset.dataset)
-    model.save_quantized(output_dir, safetensors=True, shard_size="4GB")
-    tokenizer.save_pretrained(output_dir)
+    model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
+    oneshot(model=model,save_compressed=True, dataset=dataset,recipe=recipe,output_dir=output_dir,max_seq_length=2048,num_calibration_samples=512)
+
 
 class SemanticTokenStreamer(TextStreamer):
     
@@ -217,8 +217,6 @@ class Qwen3Text2SemanticModel:
     t2s_token_start:any
     def __init__(self, model_path):
         print(f"Loading model on device: {device}")
-        from transformers import activations
-        activations.PytorchGELUTanh = activations.GELUTanh
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
             trust_remote_code=True
@@ -302,14 +300,14 @@ if __name__ == '__main__':
         "-o", 
         "--output_dir", 
         type=str, 
-        default="./logs/awq", 
+        default="./logs/s1", 
         help="Path to save the checkpoint"
     )
     parser.add_argument(
         "-b", 
         "--batch_size", 
         type=int, 
-        default=2, 
+        default=4, 
         help="Batch size"
     )
     parser.add_argument(
@@ -323,7 +321,7 @@ if __name__ == '__main__':
         "-ga", 
         "--gradient_acc", 
         type=int, 
-        default=1, 
+        default=2, 
         help="Gradient accumulation steps to train"
     )
     parser.add_argument(
@@ -356,7 +354,7 @@ if __name__ == '__main__':
         "-awq", 
         '--awq',
         action='store_true',
-        default=True,
+        default=False,
         help='Make the AWQ 4bit version of the model'
     )
     parser.add_argument(

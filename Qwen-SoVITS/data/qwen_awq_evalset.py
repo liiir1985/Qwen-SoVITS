@@ -30,7 +30,11 @@ class Qwen3AWQEvalDataset:
             "ja" : torch.tensor(tokenizer.convert_tokens_to_ids("<lang_ja>"), dtype=torch.int64).unsqueeze(0),        
         }
         f_cnt = 0
-        files = glob.glob(f"{semantic_path}/*.txt")
+        files = glob.glob(f"{semantic_path}/*.txt")        
+        self.column_names=[
+            "input_ids",
+            "input_ids_full", 
+        ]
         for i in tqdm(files,desc="Loading dataset"):
             with open(i, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -60,9 +64,28 @@ class Qwen3AWQEvalDataset:
                         final = txt_ids
                         final_full = txt_ids_full
                     
-                    self.dataset.append(tokenizer.decode(final, skip_special_tokens=False))
-                    self.dataset.append(tokenizer.decode(final_full, skip_special_tokens=False))
+                    self.dataset.append({
+                        "input_ids":final,
+                        "input_ids_full":final_full
+                        })
                     
             f_cnt+=1
 
         print(f"Dataset loaded with {len(self.dataset)} records")
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __getitem__(self, idx: int) -> dict:
+        return self.dataset[idx]
+    
+    def get(self, key:str) -> dict:
+        if key == "calibration":
+            return self
+        
+    def shuffle(self):
+        random.shuffle(self.dataset)
+        return self
+
+    def select(self, num):
+        return [self.dataset[i] for i in num]
